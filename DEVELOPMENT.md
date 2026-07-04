@@ -77,7 +77,7 @@ Android 15+에서 24시간당 6시간 누적 실행 제한이 있어 "상시 실
 `RainMonitorService`는 앱이 꺼져 있어도 계속 실행되며 약 **5.5분 간격**으로 다음을 반복한다:
 
 1. `FusedLocationProviderClient.getCurrentLocation()`으로 현재 위치 조회
-2. `RadarApi.fetchFrames(count=6)`로 최근 레이더 프레임 조회
+2. `RadarApi.fetchFrames()`로 최근 레이더 프레임 조회 (S3의 `current.json` 최신 스냅샷)
 3. `ForecastEngine.computeForecast()`로 강수 도달 예측 계산
 4. 결과를 `RainForecastBus`(StateFlow)에 게시 → `MainActivity`가 살아있으면 WebView에 전달
 5. `NotificationDedup` 상태머신으로 알림 필요 여부 판단 후 알림 표시
@@ -108,11 +108,17 @@ Android 15+에서 24시간당 6시간 누적 실행 제한이 있어 "상시 실
 
 ### 4.1 API 응답 구조 (실측 확인됨)
 
+더 이상 `ribs.kr` 백엔드를 호출하지 않고, S3에 정적으로 올라오는 최신 스냅샷 JSON을 파라미터 없이
+직접 읽어온다.
+
 ```
-GET https://www.ribs.kr/api/rain-assist/radar-frames?count=6
+GET https://my-rain-assist.s3.ap-northeast-2.amazonaws.com/rain-assist/current.json
 
 {
   "corners": [[lat,lon], [lat,lon], [lat,lon], [lat,lon]],
+  "legend": [...],          // 안드로이드 앱에서는 미사용
+  "noDataIndex": 255,        // 안드로이드 앱에서는 미사용
+  "rainThresholdIndex": 22,  // 안드로이드 앱에서는 미사용
   "frames": [
     { "tm": "202607041000", "gridWidth": 182, "gridHeight": 182, "gridDataBase64": "..." },
     ...  // tm 오름차순(오래된 것 → 최신), tm은 UTC

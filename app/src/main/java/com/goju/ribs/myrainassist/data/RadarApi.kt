@@ -9,12 +9,12 @@ import java.net.URL
 
 object RadarApi {
 
-    private const val BASE_URL = "https://www.ribs.kr/api/rain-assist/radar-frames"
+    private const val CURRENT_JSON_URL = "https://my-rain-assist.s3.ap-northeast-2.amazonaws.com/rain-assist/current.json"
     private const val CONNECT_TIMEOUT_MS = 10_000
     private const val READ_TIMEOUT_MS = 10_000
 
-    suspend fun fetchFrames(count: Int = 6): RadarResponse = withContext(Dispatchers.IO) {
-        val url = URL("$BASE_URL?count=$count")
+    suspend fun fetchFrames(): RadarResponse = withContext(Dispatchers.IO) {
+        val url = URL(CURRENT_JSON_URL)
         val connection = url.openConnection() as HttpURLConnection
         try {
             connection.requestMethod = "GET"

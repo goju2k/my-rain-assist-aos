@@ -40,14 +40,7 @@ class RainMonitorService : Service() {
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         notificationDedup = NotificationDedup(this)
 
-        try {
-            startForeground(
-                NotificationHelper.ONGOING_NOTIFICATION_ID,
-                NotificationHelper.buildOngoingNotification(this),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
-            )
-        } catch (e: SecurityException) {
-            Log.w(TAG, "Missing permission to start location foreground service", e)
+        if (!startOngoingForeground()) {
             stopSelf()
             return
         }
@@ -66,8 +59,26 @@ class RainMonitorService : Service() {
         super.onDestroy()
     }
 
+    // Some OEMs (notably Samsung One UI) silently drop the ongoing notification while leaving
+    // the service itself alive and foreground, even with battery usage set to "unrestricted".
+    // Re-asserting startForeground() with a fresh notification each poll cycle recreates it.
+    private fun startOngoingForeground(): Boolean {
+        return try {
+            startForeground(
+                NotificationHelper.ONGOING_NOTIFICATION_ID,
+                NotificationHelper.buildOngoingNotification(this),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
+            )
+            true
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Missing permission to start location foreground service", e)
+            false
+        }
+    }
+
     private suspend fun pollLoop() {
         while (true) {
+            startOngoingForeground()
             runCatching { runCycle() }.onFailure { Log.w(TAG, "Poll cycle failed", it) }
             delay(POLL_INTERVAL_MS)
         }
@@ -75,7 +86,7 @@ class RainMonitorService : Service() {
 
     private suspend fun runCycle() {
         val location = getCurrentLocation() ?: return
-        val response = runCatching { RadarApi.fetchFrames(count = FRAME_COUNT) }
+        val response = runCatching { RadarApi.fetchFrames() }
             .onFailure { Log.w(TAG, "runCycle: fetchFrames failed", it) }
             .getOrNull() ?: return
         val result = ForecastEngine.computeForecast(response, location, System.currentTimeMillis()) ?: return
@@ -107,6 +118,5 @@ class RainMonitorService : Service() {
     private companion object {
         const val TAG = "RainMonitorService"
         const val POLL_INTERVAL_MS = 5 * 60 * 1000L + 30_000L
-        const val FRAME_COUNT = 6
     }
 }
