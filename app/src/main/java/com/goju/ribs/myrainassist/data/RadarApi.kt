@@ -41,10 +41,8 @@ object RadarApi {
             val f = framesJson.getJSONObject(i)
             val gridWidth = f.getInt("gridWidth")
             val gridHeight = f.getInt("gridHeight")
-            val grid = Base64.decode(f.getString("gridDataBase64"), Base64.DEFAULT)
-            require(grid.size == gridWidth * gridHeight) {
-                "grid size ${grid.size} does not match $gridWidth x $gridHeight"
-            }
+            val rawBytes = Base64.decode(f.getString("gridDataBase64"), Base64.DEFAULT)
+            val grid = GridRleDecoder.decode(rawBytes, gridWidth, gridHeight)
             RadarFrame(tm = f.getString("tm"), gridWidth = gridWidth, gridHeight = gridHeight, grid = grid)
         }
 
