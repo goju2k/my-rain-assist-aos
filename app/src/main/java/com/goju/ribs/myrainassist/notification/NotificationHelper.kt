@@ -55,7 +55,7 @@ object NotificationHelper {
             .build()
     }
 
-    fun showIncomingRainAlert(context: Context, etaMinutes: Int) {
+    fun showIncomingRainAlert(context: Context, etaMinutes: Int): String {
         val hours = etaMinutes / 60
         val minutes = etaMinutes % 60
         val text = when {
@@ -64,14 +64,19 @@ object NotificationHelper {
             else -> "${hours}시간 ${minutes}분 뒤 비가 옵니다"
         }
         show(context, "비 소식", text)
+        return text
     }
 
-    fun showActiveRainAlert(context: Context) {
-        show(context, "비 소식", "지금 비가 오고 있어요")
+    fun showActiveRainAlert(context: Context): String {
+        val text = "지금 비가 오고 있어요"
+        show(context, "비 소식", text)
+        return text
     }
 
-    fun showRainStoppedAlert(context: Context) {
-        show(context, "비 소식", "비가 그쳤어요")
+    fun showRainStoppedAlert(context: Context): String {
+        val text = "비가 그쳤어요"
+        show(context, "비 소식", text)
+        return text
     }
 
     private fun contentIntent(context: Context): PendingIntent = PendingIntent.getActivity(

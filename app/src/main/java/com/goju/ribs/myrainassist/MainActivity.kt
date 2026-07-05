@@ -12,25 +12,35 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.goju.ribs.myrainassist.notification.RainEventLog
 import com.goju.ribs.myrainassist.service.RainForecastBus
 import com.goju.ribs.myrainassist.service.RainMonitorService
 import com.goju.ribs.myrainassist.ui.OnboardingStepInfo
 import com.goju.ribs.myrainassist.ui.PermissionOnboardingScreen
+import com.goju.ribs.myrainassist.ui.RainEventLogScreen
 import com.goju.ribs.myrainassist.ui.RainWebViewScreen
 import com.goju.ribs.myrainassist.ui.theme.MyRainAssistTheme
 import com.goju.ribs.myrainassist.webview.WebBridge
@@ -72,10 +82,37 @@ class MainActivity : ComponentActivity() {
                 val index = stepIndex
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     if (index >= ONBOARDING_STEPS.size) {
-                        RainWebViewScreen(
-                            onWebViewCreated = { webView = it },
-                            modifier = Modifier.fillMaxSize().padding(innerPadding),
-                        )
+                        var showEventLog by remember { mutableStateOf(false) }
+                        BackHandler(enabled = showEventLog) { showEventLog = false }
+                        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+                            RainWebViewScreen(
+                                onWebViewCreated = { webView = it },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                            if (showEventLog) {
+                                Surface(modifier = Modifier.fillMaxSize()) {
+                                    RainEventLogScreen(
+                                        entries = remember(showEventLog) { RainEventLog.readAll(this@MainActivity) },
+                                        onBack = { showEventLog = false },
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
+                            } else {
+                                Surface(
+                                    onClick = { showEventLog = true },
+                                    modifier = Modifier.align(Alignment.BottomStart).padding(16.dp),
+                                    shape = MaterialTheme.shapes.large,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    shadowElevation = 4.dp,
+                                ) {
+                                    Text(
+                                        "기록",
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                    )
+                                }
+                            }
+                        }
                     } else {
                         val step = ONBOARDING_STEPS[index]
                         PermissionOnboardingScreen(
@@ -106,6 +143,7 @@ class MainActivity : ComponentActivity() {
         skipAlreadySatisfiedSteps()
         if (stepIndex >= ONBOARDING_STEPS.size) {
             startMonitoringService()
+            webView?.reload()
         }
     }
 

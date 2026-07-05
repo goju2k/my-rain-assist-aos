@@ -10,6 +10,7 @@ import com.goju.ribs.myrainassist.analysis.NotificationDedup
 import com.goju.ribs.myrainassist.data.LatLon
 import com.goju.ribs.myrainassist.data.RadarApi
 import com.goju.ribs.myrainassist.notification.NotificationHelper
+import com.goju.ribs.myrainassist.notification.RainEventLog
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -99,9 +100,18 @@ class RainMonitorService : Service() {
 
         val signal = NotificationDedup.Signal(result.etaMinutes, result.nearestRainDistanceKm)
         when (val action = notificationDedup.evaluate(signal)) {
-            is NotificationDedup.Action.NotifyIncoming -> NotificationHelper.showIncomingRainAlert(this, action.etaMinutes)
-            NotificationDedup.Action.NotifyActiveRain -> NotificationHelper.showActiveRainAlert(this)
-            NotificationDedup.Action.NotifyRainStopped -> NotificationHelper.showRainStoppedAlert(this)
+            is NotificationDedup.Action.NotifyIncoming -> {
+                val message = NotificationHelper.showIncomingRainAlert(this, action.etaMinutes)
+                RainEventLog.append(this, "INCOMING", message)
+            }
+            NotificationDedup.Action.NotifyActiveRain -> {
+                val message = NotificationHelper.showActiveRainAlert(this)
+                RainEventLog.append(this, "ACTIVE", message)
+            }
+            NotificationDedup.Action.NotifyRainStopped -> {
+                val message = NotificationHelper.showRainStoppedAlert(this)
+                RainEventLog.append(this, "STOPPED", message)
+            }
             NotificationDedup.Action.None -> Unit
         }
     }

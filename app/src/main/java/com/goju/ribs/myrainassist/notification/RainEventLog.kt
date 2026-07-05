@@ -1,0 +1,50 @@
+package com.goju.ribs.myrainassist.notification
+
+import android.content.Context
+import org.json.JSONObject
+import java.io.File
+
+data class RainEventLogEntry(val timestampEpochMs: Long, val state: String, val message: String)
+
+/**
+ * Persists a bounded history of rain notification events to a JSON-lines file in app-private
+ * storage, so they can be reviewed later even though the background service can't be watched live.
+ */
+object RainEventLog {
+
+    private const val FILE_NAME = "rain_events.jsonl"
+    private const val MAX_ENTRIES = 200
+
+    @Synchronized
+    fun append(context: Context, state: String, message: String) {
+        val entry = JSONObject()
+            .put("timestampEpochMs", System.currentTimeMillis())
+            .put("state", state)
+            .put("message", message)
+
+        val file = File(context.filesDir, FILE_NAME)
+        val lines = (if (file.exists()) file.readLines() else emptyList()).toMutableList()
+        lines.add(entry.toString())
+        while (lines.size > MAX_ENTRIES) lines.removeAt(0)
+        file.writeText(lines.joinToString("\n") { it } + "\n")
+    }
+
+    @Synchronized
+    fun readAll(context: Context): List<RainEventLogEntry> {
+        val file = File(context.filesDir, FILE_NAME)
+        if (!file.exists()) return emptyList()
+        return file.readLines()
+            .mapNotNull { line ->
+                if (line.isBlank()) return@mapNotNull null
+                runCatching {
+                    val json = JSONObject(line)
+                    RainEventLogEntry(
+                        timestampEpochMs = json.getLong("timestampEpochMs"),
+                        state = json.getString("state"),
+                        message = json.getString("message"),
+                    )
+                }.getOrNull()
+            }
+            .sortedByDescending { it.timestampEpochMs }
+    }
+}
