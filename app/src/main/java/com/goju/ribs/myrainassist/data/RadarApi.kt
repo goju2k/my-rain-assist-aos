@@ -6,10 +6,11 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.zip.GZIPInputStream
 
 object RadarApi {
 
-    private const val CURRENT_JSON_URL = "https://my-rain-assist.s3.ap-northeast-2.amazonaws.com/rain-assist/current.json"
+    private const val CURRENT_JSON_URL = "https://d8dfs01bak16j.cloudfront.net/rain-assist/current.json"
     private const val CONNECT_TIMEOUT_MS = 10_000
     private const val READ_TIMEOUT_MS = 10_000
 
@@ -20,7 +21,13 @@ object RadarApi {
             connection.requestMethod = "GET"
             connection.connectTimeout = CONNECT_TIMEOUT_MS
             connection.readTimeout = READ_TIMEOUT_MS
-            val body = connection.inputStream.bufferedReader().use { it.readText() }
+            connection.setRequestProperty("Accept-Encoding", "gzip")
+            val stream = if (connection.contentEncoding?.equals("gzip", ignoreCase = true) == true) {
+                GZIPInputStream(connection.inputStream)
+            } else {
+                connection.inputStream
+            }
+            val body = stream.bufferedReader().use { it.readText() }
             parse(body)
         } finally {
             connection.disconnect()

@@ -5,7 +5,7 @@ import com.goju.ribs.myrainassist.analysis.RainForecastResult
 
 /**
  * Native -> web push of the computed rain-cloud path vectors. The receiving `requestDrawRainPathVector`
- * JS function is expected to live on the https://www.ribs.kr/rain page; see project plan for the JSON contract.
+ * JS function is expected to live on the https://www.ribs.kr/rain-assist page; see project plan for the JSON contract.
  */
 object WebBridge {
     fun pushForecastToWebView(webView: WebView, result: RainForecastResult) {

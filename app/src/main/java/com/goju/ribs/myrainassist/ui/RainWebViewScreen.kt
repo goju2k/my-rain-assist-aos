@@ -8,7 +8,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.goju.ribs.myrainassist.webview.RainWebChromeClient
 import com.goju.ribs.myrainassist.webview.RainWebViewClient
 
-private const val RAIN_URL = "https://www.ribs.kr/rain"
+private const val RAIN_URL = "https://www.ribs.kr/rain-assist"
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable

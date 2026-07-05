@@ -1,7 +1,7 @@
 # 개발 문서
 
 `README.md`가 다루지 않는 아키텍처, 알고리즘, 웹 연동 규격, 개발 과정에서의 의사결정/이슈를
-정리한 문서. 코드를 직접 수정하거나 웹(`ribs.kr/rain`) 쪽 연동을 구현할 때 참고한다.
+정리한 문서. 코드를 직접 수정하거나 웹(`ribs.kr/rain-assist`) 쪽 연동을 구현할 때 참고한다.
 
 ---
 
@@ -77,7 +77,7 @@ Android 15+에서 24시간당 6시간 누적 실행 제한이 있어 "상시 실
 `RainMonitorService`는 앱이 꺼져 있어도 계속 실행되며 약 **5.5분 간격**으로 다음을 반복한다:
 
 1. `FusedLocationProviderClient.getCurrentLocation()`으로 현재 위치 조회
-2. `RadarApi.fetchFrames()`로 최근 레이더 프레임 조회 (S3의 `current.json` 최신 스냅샷)
+2. `RadarApi.fetchFrames()`로 최근 레이더 프레임 조회 (CloudFront의 `current.json` 최신 스냅샷)
 3. `ForecastEngine.computeForecast()`로 강수 도달 예측 계산
 4. 결과를 `RainForecastBus`(StateFlow)에 게시 → `MainActivity`가 살아있으면 WebView에 전달
 5. `NotificationDedup` 상태머신으로 알림 필요 여부 판단 후 알림 표시
@@ -108,11 +108,13 @@ Android 15+에서 24시간당 6시간 누적 실행 제한이 있어 "상시 실
 
 ### 4.1 API 응답 구조 (실측 확인됨)
 
-더 이상 `ribs.kr` 백엔드를 호출하지 않고, S3에 정적으로 올라오는 최신 스냅샷 JSON을 파라미터 없이
-직접 읽어온다.
+더 이상 `ribs.kr` 백엔드를 호출하지 않고, CloudFront(S3 오리진)에 정적으로 올라오는 최신 스냅샷
+JSON을 파라미터 없이 직접 읽어온다. 응답은 gzip 압축을 지원하므로 `Accept-Encoding: gzip`을
+보내고 `Content-Encoding` 응답 헤더가 `gzip`이면 `GZIPInputStream`으로 해제한다 (해상도가
+올라가며 응답 크기가 커졌기 때문에 중요).
 
 ```
-GET https://my-rain-assist.s3.ap-northeast-2.amazonaws.com/rain-assist/current.json
+GET https://d8dfs01bak16j.cloudfront.net/rain-assist/current.json
 
 {
   "corners": [[lat,lon], [lat,lon], [lat,lon], [lat,lon]],
@@ -205,7 +207,7 @@ IDLE ──(도달 예측 발생)──▶ WATCHING ──(비구름이 20km 밖
 
 ## 6. 웹 인터페이스 규격 (app → web)
 
-안드로이드 앱이 계산한 비구름 이동 경로를 웹뷰(`https://www.ribs.kr/rain`)에 그리게 하기 위해,
+안드로이드 앱이 계산한 비구름 이동 경로를 웹뷰(`https://www.ribs.kr/rain-assist`)에 그리게 하기 위해,
 네이티브에서 웹 페이지의 JS 함수를 직접 호출한다 (`WebView.evaluateJavascript`, 단방향
 app→web, `@JavascriptInterface` 아님).
 
@@ -316,7 +318,7 @@ minSdk 31이라 레거시 래스터 아이콘(mipmap의 `.webp`)은 실제로는
 
 - corner 순서 가정(4.2절) 실측 검증 필요 — 웹 쪽 `requestDrawRainPathVector` 구현 후 실제
   렌더링과 대조 권장
-- 웹 페이지(`ribs.kr/rain`)에 `requestDrawRainPathVector` 함수 구현 필요 (6장 스키마 참고)
+- 웹 페이지(`ribs.kr/rain-assist`)에 `requestDrawRainPathVector` 함수 구현 필요 (6장 스키마 참고)
 - 알림 상태바 아이콘이 OS/제조사 정책에 따라 항상 보장되지는 않음 (알림창 내림은 항상 정확)
 - OEM(Xiaomi/Huawei/Samsung 등)의 자체 백그라운드 킬 정책은 AOSP API로 해결 불가 — 필요 시
   제조사별 "자동 실행 허용" 설정 화면으로 안내하는 기능 추가 검토 가능
