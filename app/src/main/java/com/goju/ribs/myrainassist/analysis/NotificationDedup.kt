@@ -1,6 +1,7 @@
 package com.goju.ribs.myrainassist.analysis
 
 import android.content.Context
+import android.util.Log
 import kotlin.math.abs
 
 /**
@@ -25,7 +26,9 @@ class NotificationDedup(context: Context) {
 
     fun evaluate(signal: Signal): Action {
         val watching = prefs.getBoolean(KEY_WATCHING, false)
-        return if (!watching) evaluateIdle(signal) else evaluateWatching(signal)
+        val action = if (!watching) evaluateIdle(signal) else evaluateWatching(signal)
+        Log.d(TAG, "evaluate: watching=$watching signal=$signal -> $action")
+        return action
     }
 
     private fun evaluateIdle(signal: Signal): Action {
@@ -47,6 +50,7 @@ class NotificationDedup(context: Context) {
 
         if (!hasNearbyRain) {
             val streak = prefs.getInt(KEY_STOPPED_STREAK, 0) + 1
+            Log.d(TAG, "evaluateWatching: no nearby rain, streak=$streak/$STOP_CONFIRM_CYCLES")
             if (streak >= STOP_CONFIRM_CYCLES) {
                 prefs.edit().clear().apply()
                 return Action.NotifyRainStopped
@@ -74,6 +78,7 @@ class NotificationDedup(context: Context) {
     }
 
     private companion object {
+        const val TAG = "NotificationDedup"
         const val PREFS_NAME = "rain_notification_state"
         const val KEY_WATCHING = "watching"
         const val KEY_STOPPED_STREAK = "stopped_streak"

@@ -89,7 +89,12 @@ class RainMonitorService : Service() {
         val response = runCatching { RadarApi.fetchFrames() }
             .onFailure { Log.w(TAG, "runCycle: fetchFrames failed", it) }
             .getOrNull() ?: return
-        val result = ForecastEngine.computeForecast(response, location, System.currentTimeMillis()) ?: return
+        val result = ForecastEngine.computeForecast(response, location, System.currentTimeMillis())
+        if (result == null) {
+            Log.d(TAG, "runCycle: computeForecast returned null (frames=${response.frames.size}, location=$location)")
+            return
+        }
+        Log.d(TAG, "runCycle: state=${result.state} etaMinutes=${result.etaMinutes} nearestRainDistanceKm=${result.nearestRainDistanceKm}")
         RainForecastBus.publish(result)
 
         val signal = NotificationDedup.Signal(result.etaMinutes, result.nearestRainDistanceKm)
