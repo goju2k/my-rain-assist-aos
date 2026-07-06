@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     if (index >= ONBOARDING_STEPS.size) {
                         var showEventLog by remember { mutableStateOf(false) }
+                        var eventLogRefreshKey by remember { mutableIntStateOf(0) }
                         BackHandler(enabled = showEventLog) { showEventLog = false }
                         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                             RainWebViewScreen(
@@ -92,8 +93,12 @@ class MainActivity : ComponentActivity() {
                             if (showEventLog) {
                                 Surface(modifier = Modifier.fillMaxSize()) {
                                     RainEventLogScreen(
-                                        entries = remember(showEventLog) { RainEventLog.readAll(this@MainActivity) },
+                                        entries = remember(showEventLog, eventLogRefreshKey) { RainEventLog.readAll(this@MainActivity) },
                                         onBack = { showEventLog = false },
+                                        onClear = {
+                                            RainEventLog.clear(this@MainActivity)
+                                            eventLogRefreshKey++
+                                        },
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }

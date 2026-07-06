@@ -30,6 +30,11 @@ object RainEventLog {
     }
 
     @Synchronized
+    fun clear(context: Context) {
+        File(context.filesDir, FILE_NAME).delete()
+    }
+
+    @Synchronized
     fun readAll(context: Context): List<RainEventLogEntry> {
         val file = File(context.filesDir, FILE_NAME)
         if (!file.exists()) return emptyList()

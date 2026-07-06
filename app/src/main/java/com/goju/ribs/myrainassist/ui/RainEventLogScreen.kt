@@ -1,14 +1,17 @@
 package com.goju.ribs.myrainassist.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,34 +34,57 @@ private fun stateLabel(state: String): String = when (state) {
 }
 
 @Composable
-fun RainEventLogScreen(entries: List<RainEventLogEntry>, onBack: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier = modifier) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(onClick = onBack) { Text("닫기") }
-            Text("알림 기록", style = MaterialTheme.typography.titleMedium)
-        }
-        HorizontalDivider()
-        if (entries.isEmpty()) {
-            Text(
-                "아직 기록된 알림이 없어요",
-                modifier = Modifier.fillMaxWidth().padding(24.dp),
-                textAlign = TextAlign.Center,
-            )
-            return@Column
-        }
-        LazyColumn {
-            items(entries) { entry ->
-                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                        Text(TIME_FORMAT.format(Date(entry.timestampEpochMs)), style = MaterialTheme.typography.bodySmall)
-                        Text(stateLabel(entry.state), style = MaterialTheme.typography.labelMedium)
+fun RainEventLogScreen(
+    entries: List<RainEventLogEntry>,
+    onBack: () -> Unit,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("알림 기록", style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = onBack) { Text("닫기") }
+            }
+            HorizontalDivider()
+            if (entries.isEmpty()) {
+                Text(
+                    "아직 기록된 알림이 없어요",
+                    modifier = Modifier.fillMaxWidth().padding(24.dp),
+                    textAlign = TextAlign.Center,
+                )
+            } else {
+                LazyColumn(modifier = Modifier.weight(1f)) {
+                    items(entries) { entry ->
+                        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                Text(TIME_FORMAT.format(Date(entry.timestampEpochMs)), style = MaterialTheme.typography.bodySmall)
+                                Text(stateLabel(entry.state), style = MaterialTheme.typography.labelMedium)
+                            }
+                            Text(entry.message, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 4.dp))
+                        }
+                        HorizontalDivider()
                     }
-                    Text(entry.message, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 4.dp))
                 }
-                HorizontalDivider()
+            }
+        }
+        if (entries.isNotEmpty()) {
+            Surface(
+                onClick = onClear,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.errorContainer,
+                shadowElevation = 4.dp,
+            ) {
+                Text(
+                    "기록 지우기",
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                )
             }
         }
     }
