@@ -84,7 +84,7 @@ class NotificationDedup(context: Context) {
         const val KEY_STOPPED_STREAK = "stopped_streak"
         const val KEY_LAST_ETA_BUCKET = "last_eta_bucket"
         const val KEY_ACTIVE_RAIN_NOTIFIED = "active_rain_notified"
-        const val STOP_DISTANCE_KM = 20.0
+        const val STOP_DISTANCE_KM = 5.0
         const val STOP_CONFIRM_CYCLES = 2
         const val MATERIAL_CHANGE_MINUTES = 20
     }

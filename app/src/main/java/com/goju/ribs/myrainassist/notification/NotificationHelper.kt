@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.goju.ribs.myrainassist.MainActivity
 import com.goju.ribs.myrainassist.R
+import com.goju.ribs.myrainassist.analysis.ForecastState
 
 object NotificationHelper {
 
@@ -43,16 +44,26 @@ object NotificationHelper {
         )
     }
 
-    fun buildOngoingNotification(context: Context): Notification {
+    const val DEFAULT_ONGOING_TEXT = "주변 비구름을 감지하고 있어요"
+
+    fun buildOngoingNotification(context: Context, contentText: String = DEFAULT_ONGOING_TEXT): Notification {
         return NotificationCompat.Builder(context, ONGOING_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("비올까?")
-            .setContentText("주변 비구름을 감지하고 있어요")
+            .setContentText(contentText)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setSilent(true)
             .setContentIntent(contentIntent(context))
             .build()
+    }
+
+    /** [justStopped] shows the "rain stopped" text for exactly the one poll cycle where the stop notification fires. */
+    fun ongoingTextFor(state: ForecastState, justStopped: Boolean): String = when {
+        justStopped -> "비가 그쳤어요"
+        state == ForecastState.ACTIVE -> "비가 오고 있어요"
+        state == ForecastState.INCOMING -> "비가 곧 올 것 같아요"
+        else -> DEFAULT_ONGOING_TEXT
     }
 
     fun showIncomingRainAlert(context: Context, etaMinutes: Int): String {

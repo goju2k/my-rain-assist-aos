@@ -35,6 +35,7 @@ class RainMonitorService : Service() {
     private var pollingJob: Job? = null
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var notificationDedup: NotificationDedup
+    private var ongoingContentText: String = NotificationHelper.DEFAULT_ONGOING_TEXT
 
     override fun onCreate() {
         super.onCreate()
@@ -67,7 +68,7 @@ class RainMonitorService : Service() {
         return try {
             startForeground(
                 NotificationHelper.ONGOING_NOTIFICATION_ID,
-                NotificationHelper.buildOngoingNotification(this),
+                NotificationHelper.buildOngoingNotification(this, ongoingContentText),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
             )
             true
@@ -99,7 +100,8 @@ class RainMonitorService : Service() {
         RainForecastBus.publish(result)
 
         val signal = NotificationDedup.Signal(result.etaMinutes, result.nearestRainDistanceKm)
-        when (val action = notificationDedup.evaluate(signal)) {
+        val action = notificationDedup.evaluate(signal)
+        when (action) {
             is NotificationDedup.Action.NotifyIncoming -> {
                 val message = NotificationHelper.showIncomingRainAlert(this, action.etaMinutes)
                 RainEventLog.append(this, "INCOMING", message)
@@ -114,6 +116,11 @@ class RainMonitorService : Service() {
             }
             NotificationDedup.Action.None -> Unit
         }
+
+        // Refresh the ongoing notification text right away so it tracks the phase that was just
+        // computed, rather than waiting for the next loop iteration's pre-cycle re-assert.
+        ongoingContentText = NotificationHelper.ongoingTextFor(result.state, action == NotificationDedup.Action.NotifyRainStopped)
+        startOngoingForeground()
     }
 
     private suspend fun getCurrentLocation(): LatLon? = suspendCancellableCoroutine { cont ->
