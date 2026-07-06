@@ -36,13 +36,21 @@ object ForecastEngine {
         val userCol = (userUV.u * (latestGrid.width - 1)).roundToInt()
         val isRainingNow = latestGrid.inBounds(userRow, userCol) && latestGrid.isPresent(userRow, userCol)
 
+        // The latest frame's tm can lag behind the actual current time (e.g. the upstream KMA
+        // feed stalling for a while before a fresh frame shows up), so blob positions are known
+        // only as of tm, not as of now. Extrapolate forward by this lag before projecting arrival
+        // times, otherwise ETA/state would be computed as if tm were the current moment.
+        val lagMinutes = ((nowEpochMs / 60_000) - latestFrame.epochMinute)
+            .coerceIn(0, MAX_FORECAST_MINUTES.toLong())
+            .toInt()
+
         val blobs = ConnectedComponents.findBlobs(latestGrid, MIN_BLOB_SIZE_CELLS)
         val earlierFrames = response.frames.dropLast(1)
         val earlierGrids = earlierFrames.map { PresenceGrid.from(it) }
         val minuteDeltas = earlierFrames.map { latestFrame.epochMinute - it.epochMinute }
 
         val motions = MotionEstimator.estimate(blobs, earlierGrids, minuteDeltas)
-        val blobForecasts = motions.map { motion -> buildBlobForecast(motion, mapper, latestGrid, userLocation) }
+        val blobForecasts = motions.map { motion -> buildBlobForecast(motion, mapper, latestGrid, userLocation, lagMinutes) }
 
         // Distance uses every detected blob (not just ones with an estimated velocity), since a
         // nearby-but-unmatched blob is still "rain nearby" for the purposes of the stop condition.
@@ -53,8 +61,11 @@ object ForecastEngine {
 
         val minEta = blobForecasts.mapNotNull { it.arrivalMinutes }.minOrNull()
         val etaRounded = minEta?.let { roundToNearest(it, 10) }
+        // A lag-corrected blob forecast can already place a blob on top of the user (minEta == 0)
+        // even though the stale grid's isRainingNow check hasn't caught up yet.
+        val activeNow = isRainingNow || minEta == 0
         val state = when {
-            isRainingNow -> ForecastState.ACTIVE
+            activeNow -> ForecastState.ACTIVE
             etaRounded != null -> ForecastState.INCOMING
             else -> ForecastState.NONE
         }
@@ -63,7 +74,7 @@ object ForecastEngine {
             generatedAtEpochMs = nowEpochMs,
             userLocation = userLocation,
             state = state,
-            etaMinutes = if (isRainingNow) 0 else etaRounded,
+            etaMinutes = if (activeNow) 0 else etaRounded,
             blobs = blobForecasts,
             nearestRainDistanceKm = nearestRainDistanceKm,
         )
@@ -74,18 +85,19 @@ object ForecastEngine {
         mapper: QuadMapper,
         grid: PresenceGrid,
         userLocation: LatLon,
+        lagMinutes: Int,
     ): BlobForecast {
         val blob = motion.blob
         val u = blob.centroidCol / (grid.width - 1)
         val v = blob.centroidRow / (grid.height - 1)
-        val centroid = mapper.forwardMap(u, v)
+        val centroidAtTm = mapper.forwardMap(u, v)
 
         val du = 1.0 / (grid.width - 1)
         val dv = 1.0 / (grid.height - 1)
         val eastU = if (u + du <= 1.0) u + du else u - du
         val southV = if (v + dv <= 1.0) v + dv else v - dv
-        val kmPerCellX = haversineKm(centroid, mapper.forwardMap(eastU, v))
-        val kmPerCellY = haversineKm(centroid, mapper.forwardMap(u, southV))
+        val kmPerCellX = haversineKm(centroidAtTm, mapper.forwardMap(eastU, v))
+        val kmPerCellY = haversineKm(centroidAtTm, mapper.forwardMap(u, southV))
         val cellDiagonalKm = sqrt(kmPerCellX * kmPerCellX + kmPerCellY * kmPerCellY)
         val thresholdKm = max(MIN_ARRIVAL_THRESHOLD_KM, ARRIVAL_THRESHOLD_CELL_MULTIPLIER * cellDiagonalKm)
 
@@ -96,13 +108,20 @@ object ForecastEngine {
         // row increases southward, so northward displacement is the negative of vy.
         val headingDeg = bearingDeg(eastKm = motion.vxCellsPerMin * kmPerCellX, northKm = -motion.vyCellsPerMin * kmPerCellY)
 
-        val path = mutableListOf(PathPoint(0, centroid))
-        var arrivalMinutes: Int? = null
+        // positionAt(minutesFromTm) walks the blob forward from its last-observed (tm) position;
+        // minutesFromTm = lagMinutes + t gives the position "t minutes from now".
+        fun positionAt(minutesFromTm: Int): LatLon = offsetLatLon(
+            centroidAtTm,
+            eastKm = motion.vxCellsPerMin * kmPerCellX * minutesFromTm,
+            northKm = -motion.vyCellsPerMin * kmPerCellY * minutesFromTm,
+        )
+
+        val centroidNow = positionAt(lagMinutes)
+        val path = mutableListOf(PathPoint(0, centroidNow))
+        var arrivalMinutes: Int? = if (haversineKm(centroidNow, userLocation) <= thresholdKm) 0 else null
         var t = FORECAST_STEP_MINUTES
         while (t <= MAX_FORECAST_MINUTES) {
-            val eastKm = motion.vxCellsPerMin * kmPerCellX * t
-            val northKm = -motion.vyCellsPerMin * kmPerCellY * t
-            val pos = offsetLatLon(centroid, eastKm, northKm)
+            val pos = positionAt(lagMinutes + t)
             if (arrivalMinutes == null && haversineKm(pos, userLocation) <= thresholdKm) {
                 arrivalMinutes = t
             }
@@ -113,7 +132,7 @@ object ForecastEngine {
         return BlobForecast(
             id = "blob-${blob.id}",
             sizeCells = blob.sizeCells,
-            centroid = centroid,
+            centroid = centroidNow,
             headingDeg = headingDeg,
             speedKmh = speedKmh,
             path = path,
