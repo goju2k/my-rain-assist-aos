@@ -3,22 +3,21 @@ package com.goju.ribs.myrainassist.analysis
 import com.goju.ribs.myrainassist.data.RadarFrame
 
 /**
- * Wraps a radar frame's raw byte grid. Byte value 255 means "no precipitation echo"; any value
- * 2..250 means an echo is present at that cell. Values outside this range were never observed in
- * sampled real responses, so they are treated as "no data" (not present) rather than guessed at.
+ * Wraps a radar frame's raw byte grid, decoded from the source PNG's alpha channel by
+ * [com.goju.ribs.myrainassist.data.RadarPngDecoder]: byte value 255 means "no rain / no data" (a
+ * transparent pixel), byte value 0 means "raining" (an opaque pixel, regardless of its color).
  */
 class PresenceGrid(val width: Int, val height: Int, private val data: ByteArray) {
 
     fun valueAt(row: Int, col: Int): Int = data[row * width + col].toInt() and 0xFF
 
-    fun isPresent(row: Int, col: Int): Boolean {
-        val v = valueAt(row, col)
-        return v in 2..250
-    }
+    fun isPresent(row: Int, col: Int): Boolean = valueAt(row, col) != NO_RAIN_VALUE
 
     fun inBounds(row: Int, col: Int): Boolean = row in 0 until height && col in 0 until width
 
     companion object {
+        private const val NO_RAIN_VALUE = 255
+
         fun from(frame: RadarFrame): PresenceGrid = PresenceGrid(frame.gridWidth, frame.gridHeight, frame.grid)
     }
 }

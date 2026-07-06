@@ -25,7 +25,7 @@ app/src/main/java/com/goju/ribs/myrainassist/
     LatLon.kt                      위경도 + haversine/bearing 계산
     RadarModels.kt                 RadarFrame / RadarResponse 모델
     RadarApi.kt                    레이더 API 호출 + JSON 파싱
-    GridRleDecoder.kt              gridDataBase64 RLE/raw 자동 판별 디코딩
+    RadarPngDecoder.kt             프레임 PNG → 강수 유무 바이트 그리드 디코딩
 
   geo/
     QuadMapper.kt                  위경도 ↔ 격자 좌표 변환 (bilinear + Newton's method 역변환)
@@ -122,7 +122,7 @@ GET https://d8dfs01bak16j.cloudfront.net/rain-assist/current.json
   "noDataIndex": 255,        // 안드로이드 앱에서는 미사용
   "rainThresholdIndex": 22,  // 안드로이드 앱에서는 미사용
   "frames": [
-    { "tm": "202607041000", "gridWidth": 182, "gridHeight": 182, "gridDataBase64": "..." },
+    { "tm": "202607041000", "pngBase64": "..." },
     ...  // tm 오름차순(오래된 것 → 최신), tm은 UTC
   ]
 }
@@ -130,20 +130,19 @@ GET https://d8dfs01bak16j.cloudfront.net/rain-assist/current.json
 
 - 최상위 응답에 `data` 래퍼가 없다. 처음 구현 시 `{"data": {...}}` 형태로 잘못 가정해서 매 poll
   주기가 조용히 실패하던 실제 버그가 있었음 (수정 완료)
-- 바이트값 `255` = 강수 없음, `2~250` = 강수 echo 존재 (그 외 범위는 실측에서 등장하지 않아 미사용)
+- `pngBase64`는 팔레트(색인) PNG 이미지를 Base64 인코딩한 것. 격자 해상도는 PNG의 실제
+  가로/세로 픽셀 수를 그대로 사용한다 (`gridWidth`/`gridHeight` 필드는 더 이상 오지 않음).
+- `legend`/`noDataIndex`/`rainThresholdIndex`는 PNG를 렌더링할 때 쓰인 색상표 메타데이터일 뿐,
+  강수 유무 판정에는 쓰지 않는다 — **픽셀의 알파 채널**만으로 판정한다: 알파가 0(완전 투명)이면
+  강수 없음, 0이 아니면(불투명) 강수 있음. `RadarPngDecoder.kt`가 `BitmapFactory`로 PNG를 디코드한
+  뒤 픽셀별 알파를 검사해 `PresenceGrid`용 바이트 그리드(강수 있음=0, 없음=255)로 변환한다.
 
-**`gridDataBase64` 포맷 변천사**: 처음엔 `gridWidth*gridHeight`바이트를 그대로 담은 raw
-포맷이었으나, 이후 서버가 RLE 압축을 도입했다 (현재는 RLE만 옴, raw는 더 이상 오지 않음).
-`GridRleDecoder.kt`가 두 포맷을 모두 자동 판별해 처리한다:
-
-- **raw**: Base64 디코드 바이트 길이가 정확히 `gridWidth * gridHeight`면 그대로 사용
-- **RLE**: 그 외의 경우, `[헤더 1바이트(버전=1)] + [(value: u8, count: u16 리틀엔디안) 반복]`
-  구조로 파싱. 각 프레임의 count 합계가 `gridWidth*gridHeight`와 정확히 일치함을 실측으로 검증함
-  (재구성한 격자의 값 분포가 raw 포맷 프레임들과 동일한 패턴을 보임: 255가 전체의 ~98%)
-
-두 포맷이 한 응답 안에 섞여 온 적도 있었으므로(과거 캐시된 프레임은 raw, 새 프레임은 RLE),
-바이트 길이 기반 자동 판별 방식을 유지한다 — raw 포맷이 완전히 사라져도 해당 분기는 그냥
-타지 않을 뿐이라 안전하다.
+**이전 포맷과의 차이**: 예전에는 `gridDataBase64`에 `gridWidth*gridHeight` 크기의 원본 바이트
+그리드(값 2~250=강수 echo 세기, 255=강수 없음)를 raw 또는 RLE로 압축해 실어 보냈다. 서버가 이를
+완전히 원본 PNG 스냅샷으로 교체하면서 세기(intensity) 정보는 더 이상 신뢰할 수 있는 형태로
+오지 않고(팔레트 색상은 렌더링용일 뿐 데이터 등급이 아님), 강수 유무만 알파로 판정하도록
+단순화했다. 이 때문에 `ConnectedComponents`의 centroid 가중치(`255 - byte`)는 이제 모든 강수
+셀에서 값이 같아(항상 255) 사실상 단순 평균과 동일하게 동작한다.
 
 ### 4.2 위경도 ↔ 격자 좌표 변환 (`QuadMapper.kt`)
 

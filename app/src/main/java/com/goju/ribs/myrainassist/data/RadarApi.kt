@@ -1,6 +1,9 @@
 package com.goju.ribs.myrainassist.data
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.Base64
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -10,6 +13,7 @@ import java.util.zip.GZIPInputStream
 
 object RadarApi {
 
+    private const val TAG = "RadarApi"
     private const val CURRENT_JSON_URL = "https://d8dfs01bak16j.cloudfront.net/rain-assist/current.json"
     private const val CONNECT_TIMEOUT_MS = 10_000
     private const val READ_TIMEOUT_MS = 10_000
@@ -44,13 +48,18 @@ object RadarApi {
         }
 
         val framesJson = data.getJSONArray("frames")
-        val frames = (0 until framesJson.length()).map { i ->
+        val frames = (0 until framesJson.length()).mapNotNull { i ->
             val f = framesJson.getJSONObject(i)
-            val gridWidth = f.getInt("gridWidth")
-            val gridHeight = f.getInt("gridHeight")
-            val rawBytes = Base64.decode(f.getString("gridDataBase64"), Base64.DEFAULT)
-            val grid = GridRleDecoder.decode(rawBytes, gridWidth, gridHeight)
-            RadarFrame(tm = f.getString("tm"), gridWidth = gridWidth, gridHeight = gridHeight, grid = grid)
+            val tm = f.getString("tm")
+            val pngBytes = Base64.decode(f.getString("pngBase64"), Base64.DEFAULT)
+            val options = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+            val bitmap = BitmapFactory.decodeByteArray(pngBytes, 0, pngBytes.size, options)
+            if (bitmap == null) {
+                Log.w(TAG, "parse: failed to decode PNG for frame tm=$tm, skipping")
+                return@mapNotNull null
+            }
+            val grid = RadarPngDecoder.decode(bitmap)
+            RadarFrame(tm = tm, gridWidth = bitmap.width, gridHeight = bitmap.height, grid = grid)
         }
 
         return RadarResponse(corners = corners, frames = frames)
