@@ -20,7 +20,7 @@ object ForecastEngine {
     private const val MIN_BLOB_SIZE_CELLS = 9
     private const val MIN_ARRIVAL_THRESHOLD_KM = 3.0
     private const val ARRIVAL_THRESHOLD_CELL_MULTIPLIER = 1.5
-    private const val MAX_FORECAST_MINUTES = 60
+    private const val MAX_FORECAST_MINUTES = 90
     private const val FORECAST_STEP_MINUTES = 5
     private const val PATH_SAMPLE_INTERVAL_MINUTES = 15
     private const val KM_PER_DEGREE_LAT = 111.32

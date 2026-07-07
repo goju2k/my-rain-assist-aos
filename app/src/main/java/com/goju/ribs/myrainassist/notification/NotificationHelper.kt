@@ -66,13 +66,22 @@ object NotificationHelper {
         else -> DEFAULT_ONGOING_TEXT
     }
 
+    // Past this horizon the linear motion extrapolation is stretched thin (it's fit from only the
+    // last ~15 minutes of frames), so the wording should read as a guess rather than a prediction.
+    private const val UNCERTAIN_ETA_THRESHOLD_MINUTES = 60
+
     fun showIncomingRainAlert(context: Context, etaMinutes: Int): String {
         val hours = etaMinutes / 60
         val minutes = etaMinutes % 60
-        val text = when {
-            hours == 0 -> "${minutes}분 뒤 비가 옵니다"
-            minutes == 0 -> "${hours}시간 뒤 비가 옵니다"
-            else -> "${hours}시간 ${minutes}분 뒤 비가 옵니다"
+        val timePhrase = when {
+            hours == 0 -> "${minutes}분 뒤"
+            minutes == 0 -> "${hours}시간 뒤"
+            else -> "${hours}시간 ${minutes}분 뒤"
+        }
+        val text = if (etaMinutes > UNCERTAIN_ETA_THRESHOLD_MINUTES) {
+            "${timePhrase}쯤 비가 올 것 같아요"
+        } else {
+            "$timePhrase 비가 옵니다"
         }
         show(context, "비 소식", text)
         return text
