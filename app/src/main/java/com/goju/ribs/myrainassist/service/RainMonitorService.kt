@@ -3,19 +3,14 @@ package com.goju.ribs.myrainassist.service
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.location.Location
 import android.os.IBinder
 import android.util.Log
 import com.goju.ribs.myrainassist.analysis.ForecastEngine
 import com.goju.ribs.myrainassist.analysis.NotificationDedup
-import com.goju.ribs.myrainassist.data.LatLon
 import com.goju.ribs.myrainassist.data.RadarApi
+import com.goju.ribs.myrainassist.location.LocationFixProvider
 import com.goju.ribs.myrainassist.notification.NotificationHelper
 import com.goju.ribs.myrainassist.notification.RainEventLog
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
-import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,9 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONObject
-import kotlin.coroutines.resume
 
 /**
  * Persistent foreground service that polls the radar API on a ~5.5 minute cadence, runs the
@@ -35,13 +28,13 @@ class RainMonitorService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var pollingJob: Job? = null
-    private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private lateinit var locationProvider: LocationFixProvider
     private lateinit var notificationDedup: NotificationDedup
     private var ongoingContentText: String = NotificationHelper.DEFAULT_ONGOING_TEXT
 
     override fun onCreate() {
         super.onCreate()
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+        locationProvider = LocationFixProvider(this)
         notificationDedup = NotificationDedup(this)
 
         if (!startOngoingForeground()) {
@@ -90,7 +83,7 @@ class RainMonitorService : Service() {
 
     private suspend fun runCycle() {
         val dedupBefore = notificationDedup.debugSnapshot()
-        val locationFix = getCurrentLocation()
+        val locationFix = locationProvider.getCurrentLocation()
         if (locationFix == null) {
             Log.w(TAG, "runCycle: location unavailable, skipping cycle (dedup=$dedupBefore)")
             RainEventLog.append(this, "SKIP_LOCATION", "위치 정보를 가져오지 못해 강수 체크를 건너뛰었어요", dedupBefore)
@@ -157,57 +150,8 @@ class RainMonitorService : Service() {
         startOngoingForeground()
     }
 
-    /** [ageMs] is 0 for a fresh fix; for a [cached] fix it's how long ago the OS last recorded it. */
-    private data class LocationFix(val location: LatLon, val cached: Boolean, val ageMs: Long)
-
-    // getCurrentLocation() can fail indoors (no GPS/Wi-Fi fix) even though the user hasn't moved,
-    // which would otherwise skip the poll cycle entirely and stall rain-stopped detection. Falling
-    // back to the OS's last-known fix keeps the check running as long as it isn't too stale to
-    // trust the user is still there.
-    private suspend fun getCurrentLocation(): LocationFix? {
-        requestFreshLocation()?.let { return LocationFix(LatLon(it.latitude, it.longitude), cached = false, ageMs = 0L) }
-
-        val cached = requestLastKnownLocation() ?: return null
-        val ageMs = System.currentTimeMillis() - cached.time
-        if (ageMs > MAX_CACHED_LOCATION_AGE_MS) {
-            Log.w(TAG, "getCurrentLocation: cached location too stale (ageMs=$ageMs), ignoring")
-            return null
-        }
-        return LocationFix(LatLon(cached.latitude, cached.longitude), cached = true, ageMs = ageMs)
-    }
-
-    private suspend fun requestFreshLocation(): Location? = suspendCancellableCoroutine { cont ->
-        val cancellationSource = CancellationTokenSource()
-        try {
-            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, cancellationSource.token)
-                .addOnSuccessListener { location -> cont.resume(location) }
-                .addOnFailureListener {
-                    Log.w(TAG, "getCurrentLocation: fusedLocationClient failed", it)
-                    cont.resume(null)
-                }
-        } catch (e: SecurityException) {
-            Log.w(TAG, "getCurrentLocation: missing location permission", e)
-            cont.resume(null)
-        }
-        cont.invokeOnCancellation { cancellationSource.cancel() }
-    }
-
-    private suspend fun requestLastKnownLocation(): Location? = suspendCancellableCoroutine { cont ->
-        try {
-            fusedLocationClient.lastLocation
-                .addOnSuccessListener { location -> cont.resume(location) }
-                .addOnFailureListener {
-                    Log.w(TAG, "requestLastKnownLocation: failed", it)
-                    cont.resume(null)
-                }
-        } catch (e: SecurityException) {
-            cont.resume(null)
-        }
-    }
-
     private companion object {
         const val TAG = "RainMonitorService"
         const val POLL_INTERVAL_MS = 5 * 60 * 1000L + 30_000L
-        const val MAX_CACHED_LOCATION_AGE_MS = 6 * 60 * 60 * 1000L
     }
 }
