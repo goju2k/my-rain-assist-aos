@@ -26,6 +26,12 @@ data class RainForecastResult(
     val blobs: List<BlobForecast>,
     /** Straight-line distance from the user to the nearest currently-detected rain blob; null if no blobs at all. */
     val nearestRainDistanceKm: Double?,
+    /** tm of the radar frame this forecast was computed from, kept for notification-time debugging. */
+    val latestFrameTm: String,
+    /** Number of frames returned by the radar API this cycle. */
+    val frameCount: Int,
+    /** Minutes the latest frame's tm lagged behind [generatedAtEpochMs]. */
+    val lagMinutes: Int,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("generatedAtEpochMs", generatedAtEpochMs)

@@ -77,6 +77,9 @@ object ForecastEngine {
             etaMinutes = if (activeNow) 0 else etaRounded,
             blobs = blobForecasts,
             nearestRainDistanceKm = nearestRainDistanceKm,
+            latestFrameTm = latestFrame.tm,
+            frameCount = response.frames.size,
+            lagMinutes = lagMinutes,
         )
     }
 

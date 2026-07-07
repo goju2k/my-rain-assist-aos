@@ -4,7 +4,13 @@ import android.content.Context
 import org.json.JSONObject
 import java.io.File
 
-data class RainEventLogEntry(val timestampEpochMs: Long, val state: String, val message: String)
+data class RainEventLogEntry(
+    val timestampEpochMs: Long,
+    val state: String,
+    val message: String,
+    /** Frame/location/dedup diagnostics captured at the moment this entry was recorded, if any. */
+    val debug: JSONObject? = null,
+)
 
 /**
  * Persists a bounded history of rain notification events to a JSON-lines file in app-private
@@ -16,11 +22,12 @@ object RainEventLog {
     private const val MAX_ENTRIES = 200
 
     @Synchronized
-    fun append(context: Context, state: String, message: String) {
+    fun append(context: Context, state: String, message: String, debug: JSONObject? = null) {
         val entry = JSONObject()
             .put("timestampEpochMs", System.currentTimeMillis())
             .put("state", state)
             .put("message", message)
+        if (debug != null) entry.put("debug", debug)
 
         val file = File(context.filesDir, FILE_NAME)
         val lines = (if (file.exists()) file.readLines() else emptyList()).toMutableList()
@@ -47,6 +54,7 @@ object RainEventLog {
                         timestampEpochMs = json.getLong("timestampEpochMs"),
                         state = json.getString("state"),
                         message = json.getString("message"),
+                        debug = json.optJSONObject("debug"),
                     )
                 }.getOrNull()
             }

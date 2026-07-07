@@ -2,6 +2,7 @@ package com.goju.ribs.myrainassist.analysis
 
 import android.content.Context
 import android.util.Log
+import org.json.JSONObject
 import kotlin.math.abs
 
 /**
@@ -23,6 +24,13 @@ class NotificationDedup(context: Context) {
     }
 
     data class Signal(val etaMinutesRounded: Int?, val nearestRainDistanceKm: Double?)
+
+    /** Snapshot of the persisted state machine, for attaching to debug/event logs. */
+    fun debugSnapshot(): JSONObject = JSONObject()
+        .put("watching", prefs.getBoolean(KEY_WATCHING, false))
+        .put("stoppedStreak", prefs.getInt(KEY_STOPPED_STREAK, 0))
+        .put("activeRainNotified", prefs.getBoolean(KEY_ACTIVE_RAIN_NOTIFIED, false))
+        .put("lastEtaBucket", if (prefs.contains(KEY_LAST_ETA_BUCKET)) prefs.getInt(KEY_LAST_ETA_BUCKET, -1) else JSONObject.NULL)
 
     fun evaluate(signal: Signal): Action {
         val watching = prefs.getBoolean(KEY_WATCHING, false)
