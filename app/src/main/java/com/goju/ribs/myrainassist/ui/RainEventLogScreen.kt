@@ -30,6 +30,7 @@ private fun stateLabel(state: String): String = when (state) {
     "INCOMING" -> "예보"
     "ACTIVE" -> "강수 시작"
     "STOPPED" -> "강수 종료"
+    "MISSED" -> "예보 취소"
     "SKIP_LOCATION" -> "위치 실패"
     "SKIP_FETCH" -> "레이더 실패"
     "SKIP_FORECAST" -> "범위 밖"

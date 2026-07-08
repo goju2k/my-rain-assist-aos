@@ -25,6 +25,13 @@ object ForecastEngine {
     private const val PATH_SAMPLE_INTERVAL_MINUTES = 15
     private const val KM_PER_DEGREE_LAT = 111.32
 
+    // A strong, sizeable cell this close counts as "raining here" even if the exact pixel under
+    // the user is still dry — light scattered rain nearby genuinely isn't raining on you yet, but
+    // a large storm core this close almost certainly reaches you before the radar frame catches up.
+    private const val NEARBY_STRONG_RADIUS_KM = 3.0
+    private const val NEARBY_STRONG_MIN_MMH = 15.0
+    private const val NEARBY_STRONG_MIN_CELLS = 30
+
     fun computeForecast(response: RadarResponse, userLocation: LatLon, nowEpochMs: Long): RainForecastResult? {
         if (response.frames.size < 2) return null
         val mapper = QuadMapper(response.corners)
@@ -54,20 +61,35 @@ object ForecastEngine {
 
         // Distance uses every detected blob (not just ones with an estimated velocity), since a
         // nearby-but-unmatched blob is still "rain nearby" for the purposes of the stop condition.
-        val nearestRainDistanceKm = blobs.minOfOrNull { blob ->
+        val blobDistancesKm = blobs.map { blob ->
             val centroid = mapper.forwardMap(blob.centroidCol / (latestGrid.width - 1), blob.centroidRow / (latestGrid.height - 1))
-            haversineKm(centroid, userLocation)
+            blob to haversineKm(centroid, userLocation)
         }
+        val nearestRainDistanceKm = blobDistancesKm.minOfOrNull { it.second }
+        val nearbyStrongBlob = blobDistancesKm
+            .filter { (blob, distanceKm) ->
+                distanceKm <= NEARBY_STRONG_RADIUS_KM && blob.sizeCells >= NEARBY_STRONG_MIN_CELLS && blob.peakMmh >= NEARBY_STRONG_MIN_MMH
+            }
+            .minByOrNull { it.second }
+            ?.first
 
         val minEta = blobForecasts.mapNotNull { it.arrivalMinutes }.minOrNull()
         val etaRounded = minEta?.let { roundToNearest(it, 10) }
         // A lag-corrected blob forecast can already place a blob on top of the user (minEta == 0)
         // even though the stale grid's isRainingNow check hasn't caught up yet.
-        val activeNow = isRainingNow || minEta == 0
+        val activeNow = isRainingNow || minEta == 0 || nearbyStrongBlob != null
         val state = when {
             activeNow -> ForecastState.ACTIVE
             etaRounded != null -> ForecastState.INCOMING
             else -> ForecastState.NONE
+        }
+
+        val intensityMmh = when {
+            state == ForecastState.ACTIVE && isRainingNow -> latestGrid.mmhAt(userRow, userCol)
+            state == ForecastState.ACTIVE && nearbyStrongBlob != null -> nearbyStrongBlob.peakMmh
+            state == ForecastState.ACTIVE -> blobForecasts.firstOrNull { it.arrivalMinutes == 0 }?.peakMmh
+            state == ForecastState.INCOMING -> blobForecasts.filter { it.arrivalMinutes != null }.minByOrNull { it.arrivalMinutes!! }?.peakMmh
+            else -> null
         }
 
         return RainForecastResult(
@@ -77,6 +99,7 @@ object ForecastEngine {
             etaMinutes = if (activeNow) 0 else etaRounded,
             blobs = blobForecasts,
             nearestRainDistanceKm = nearestRainDistanceKm,
+            intensityMmh = intensityMmh,
             latestFrameTm = latestFrame.tm,
             frameCount = response.frames.size,
             lagMinutes = lagMinutes,
@@ -140,6 +163,7 @@ object ForecastEngine {
             speedKmh = speedKmh,
             path = path,
             arrivalMinutes = arrivalMinutes,
+            peakMmh = blob.peakMmh,
         )
     }
 

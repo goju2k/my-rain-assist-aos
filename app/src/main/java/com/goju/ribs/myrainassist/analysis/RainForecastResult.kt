@@ -16,6 +16,8 @@ data class BlobForecast(
     val speedKmh: Double,
     val path: List<PathPoint>,
     val arrivalMinutes: Int?,
+    /** Heaviest rain tier found anywhere in this blob, per [com.goju.ribs.myrainassist.data.RadarLegend]. */
+    val peakMmh: Double,
 )
 
 data class RainForecastResult(
@@ -26,6 +28,8 @@ data class RainForecastResult(
     val blobs: List<BlobForecast>,
     /** Straight-line distance from the user to the nearest currently-detected rain blob; null if no blobs at all. */
     val nearestRainDistanceKm: Double?,
+    /** Estimated intensity (mm/h) behind [state] — the rain overhead for ACTIVE, or the approaching blob's peak for INCOMING. Null for NONE. */
+    val intensityMmh: Double?,
     /** tm of the radar frame this forecast was computed from, kept for notification-time debugging. */
     val latestFrameTm: String,
     /** Number of frames returned by the radar API this cycle. */
@@ -43,6 +47,7 @@ data class RainForecastResult(
             put("willArrive", etaMinutes != null)
             put("etaMinutes", etaMinutes ?: JSONObject.NULL)
             put("state", state.name)
+            put("intensityMmh", intensityMmh ?: JSONObject.NULL)
         })
         put("blobs", JSONArray().apply {
             blobs.filter { it.isFinite() }.forEach { put(it.toJson()) }
@@ -62,6 +67,7 @@ data class RainForecastResult(
         })
         put("headingDeg", headingDeg)
         put("speedKmh", speedKmh)
+        put("peakMmh", peakMmh)
         put("path", JSONArray().apply {
             path.forEach { point ->
                 put(JSONObject().apply {

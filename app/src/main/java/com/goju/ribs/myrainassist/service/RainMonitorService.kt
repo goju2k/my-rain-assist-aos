@@ -123,30 +123,44 @@ class RainMonitorService : Service() {
                 .put("lagMinutes", result.lagMinutes)
                 .put("nearestRainDistanceKm", result.nearestRainDistanceKm ?: JSONObject.NULL)
                 .put("etaMinutes", result.etaMinutes ?: JSONObject.NULL)
+                .put("intensityMmh", result.intensityMmh ?: JSONObject.NULL)
                 .put("userLat", location.lat)
                 .put("userLon", location.lon)
                 .put("locationCached", locationFix.cached)
                 .put("locationAgeMs", locationFix.ageMs)
-            when (action) {
+            val notified: Pair<String, String>? = when (action) {
                 is NotificationDedup.Action.NotifyIncoming -> {
-                    val message = NotificationHelper.showIncomingRainAlert(this, action.etaMinutes)
+                    val message = NotificationHelper.showIncomingRainAlert(this, action.etaMinutes, result.intensityMmh)
                     RainEventLog.append(this, "INCOMING", message, frameDebug)
+                    "INCOMING" to message
                 }
                 NotificationDedup.Action.NotifyActiveRain -> {
-                    val message = NotificationHelper.showActiveRainAlert(this)
+                    val message = NotificationHelper.showActiveRainAlert(this, result.intensityMmh)
                     RainEventLog.append(this, "ACTIVE", message, frameDebug)
+                    "ACTIVE" to message
                 }
-                NotificationDedup.Action.NotifyRainStopped -> {
-                    val message = NotificationHelper.showRainStoppedAlert(this)
-                    RainEventLog.append(this, "STOPPED", message, frameDebug)
+                is NotificationDedup.Action.NotifyRainStopped -> {
+                    val message = NotificationHelper.showRainStoppedAlert(this, action.wasActive)
+                    val state = if (action.wasActive) "STOPPED" else "MISSED"
+                    RainEventLog.append(this, state, message, frameDebug)
+                    state to message
                 }
-                NotificationDedup.Action.None -> Unit
+                NotificationDedup.Action.None -> null
+            }
+            // Pushed to the WebView verbatim so it never has to regenerate wording that could
+            // drift from what the OS notification just showed — see docs/webview-interface.md.
+            if (notified != null) {
+                val (state, message) = notified
+                NotificationEventBus.publish(
+                    NotificationEvent(state, message, result.etaMinutes, result.intensityMmh, System.currentTimeMillis()),
+                )
             }
         }
 
         // Refresh the ongoing notification text right away so it tracks the phase that was just
         // computed, rather than waiting for the next loop iteration's pre-cycle re-assert.
-        ongoingContentText = NotificationHelper.ongoingTextFor(result.state, action == NotificationDedup.Action.NotifyRainStopped)
+        val stoppedWasActive = (action as? NotificationDedup.Action.NotifyRainStopped)?.wasActive
+        ongoingContentText = NotificationHelper.ongoingTextFor(result.state, stoppedWasActive, result.intensityMmh)
         startOngoingForeground()
     }
 

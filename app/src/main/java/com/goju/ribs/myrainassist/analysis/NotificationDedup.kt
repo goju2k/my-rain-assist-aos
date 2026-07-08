@@ -19,7 +19,8 @@ class NotificationDedup(context: Context) {
     sealed class Action {
         data class NotifyIncoming(val etaMinutes: Int) : Action()
         data object NotifyActiveRain : Action()
-        data object NotifyRainStopped : Action()
+        /** [wasActive] is false when an INCOMING forecast never actually arrived — the episode should read as "the rain forecast fell through", not "rain stopped". */
+        data class NotifyRainStopped(val wasActive: Boolean) : Action()
         data object None : Action()
     }
 
@@ -60,8 +61,9 @@ class NotificationDedup(context: Context) {
             val streak = prefs.getInt(KEY_STOPPED_STREAK, 0) + 1
             Log.d(TAG, "evaluateWatching: no nearby rain, streak=$streak/$STOP_CONFIRM_CYCLES")
             if (streak >= STOP_CONFIRM_CYCLES) {
+                val wasActive = prefs.getBoolean(KEY_ACTIVE_RAIN_NOTIFIED, false)
                 prefs.edit().clear().apply()
-                return Action.NotifyRainStopped
+                return Action.NotifyRainStopped(wasActive)
             }
             prefs.edit().putInt(KEY_STOPPED_STREAK, streak).apply()
             return Action.None

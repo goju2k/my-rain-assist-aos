@@ -1,11 +1,15 @@
 package com.goju.ribs.myrainassist.analysis
 
+import com.goju.ribs.myrainassist.data.RadarLegend
+
 data class Blob(
     val id: Int,
     val cells: List<IntArray>,
     val centroidRow: Double,
     val centroidCol: Double,
     val sizeCells: Int,
+    /** Heaviest rain tier found anywhere in this blob. */
+    val peakMmh: Double,
 )
 
 /** 8-connected flood-fill blob extraction over a [PresenceGrid], dropping specks below [minSizeCells]. */
@@ -30,6 +34,7 @@ object ConnectedComponents {
                 var weightSum = 0.0
                 var rowAcc = 0.0
                 var colAcc = 0.0
+                var minIndexSeen = Int.MAX_VALUE
                 val queue = ArrayDeque<IntArray>()
                 queue.add(intArrayOf(row, col))
                 visited[row][col] = true
@@ -37,7 +42,9 @@ object ConnectedComponents {
                 while (queue.isNotEmpty()) {
                     val (r, c) = queue.removeFirst()
                     cells.add(intArrayOf(r, c))
-                    val weight = (255 - grid.valueAt(r, c)).toDouble()
+                    val value = grid.valueAt(r, c)
+                    if (value < minIndexSeen) minIndexSeen = value
+                    val weight = (255 - value).toDouble()
                     weightSum += weight
                     rowAcc += r * weight
                     colAcc += c * weight
@@ -55,7 +62,8 @@ object ConnectedComponents {
                 if (cells.size >= minSizeCells) {
                     val centroidRow = if (weightSum > 0) rowAcc / weightSum else cells.map { it[0] }.average()
                     val centroidCol = if (weightSum > 0) colAcc / weightSum else cells.map { it[1] }.average()
-                    blobs.add(Blob(nextId++, cells, centroidRow, centroidCol, cells.size))
+                    val peakMmh = RadarLegend.mmhForIndex(minIndexSeen)
+                    blobs.add(Blob(nextId++, cells, centroidRow, centroidCol, cells.size, peakMmh))
                 }
             }
         }

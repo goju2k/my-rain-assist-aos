@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.app.NotificationManager
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -35,7 +36,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.goju.ribs.myrainassist.notification.NotificationHelper
 import com.goju.ribs.myrainassist.notification.RainEventLog
+import com.goju.ribs.myrainassist.service.NotificationEventBus
 import com.goju.ribs.myrainassist.service.RainForecastBus
 import com.goju.ribs.myrainassist.service.RainMonitorService
 import com.goju.ribs.myrainassist.ui.OnboardingStepInfo
@@ -46,34 +49,46 @@ import com.goju.ribs.myrainassist.ui.theme.MyRainAssistTheme
 import com.goju.ribs.myrainassist.webview.WebBridge
 import kotlinx.coroutines.launch
 
-private enum class OnboardingStep { NOTIFICATIONS, LOCATION, BACKGROUND_LOCATION, BATTERY_OPTIMIZATION }
+private const val KEY_FINE_LOCATION_ASKED = "fine_location_asked"
+
+private enum class OnboardingStep { NOTIFICATIONS, LOCATION, BACKGROUND_LOCATION, BATTERY_OPTIMIZATION, FULL_SCREEN_ALERT }
 
 private val ONBOARDING_STEPS = listOf(
     OnboardingStep.NOTIFICATIONS,
     OnboardingStep.LOCATION,
     OnboardingStep.BACKGROUND_LOCATION,
     OnboardingStep.BATTERY_OPTIMIZATION,
+    OnboardingStep.FULL_SCREEN_ALERT,
 )
 
 class MainActivity : ComponentActivity() {
 
     private var webView: WebView? = null
     private var stepIndex by mutableIntStateOf(0)
+    private var wasStopped = false
 
     private lateinit var prefs: SharedPreferences
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { advance() }
+    // Requesting FINE alongside COARSE is what makes the system show the "precise location" toggle
+    // at all — asking for COARSE alone (as this used to) silently caps every fix to a ~2km grid.
     private val locationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { advance() }
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            prefs.edit().putBoolean(KEY_FINE_LOCATION_ASKED, true).apply()
+            advance()
+        }
     private val backgroundLocationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { advance() }
     private val batteryOptimizationLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { advance() }
+    private val fullScreenAlertLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { advance() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        applyWakeScreenFlags(intent)
         prefs = getSharedPreferences("onboarding_state", Context.MODE_PRIVATE)
         skipAlreadySatisfiedSteps()
 
@@ -141,6 +156,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                NotificationEventBus.events.collect { event ->
+                    val view = webView
+                    if (event != null && view != null) {
+                        WebBridge.pushNotificationToWebView(view, event)
+                    }
+                }
+            }
+        }
     }
 
     override fun onResume() {
@@ -148,8 +173,32 @@ class MainActivity : ComponentActivity() {
         skipAlreadySatisfiedSteps()
         if (stepIndex >= ONBOARDING_STEPS.size) {
             startMonitoringService()
-            webView?.reload()
+            // Pulling down the notification shade only triggers onPause, not onStop, so skip this
+            // then — only re-locate when actually returning from background. No page reload: the
+            // WebView interface re-locates and redraws in place (see docs/webview-interface.md).
+            if (wasStopped) {
+                webView?.let { WebBridge.requestPositionRefresh(it) }
+                wasStopped = false
+            }
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        wasStopped = true
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyWakeScreenFlags(intent)
+    }
+
+    /** Set on the alert notification's full-screen intent so a rain alert wakes and unlocks the screen like an incoming call, instead of sitting unseen while the screen is off. */
+    private fun applyWakeScreenFlags(intent: Intent) {
+        if (!intent.getBooleanExtra(NotificationHelper.EXTRA_WAKE_SCREEN, false)) return
+        setShowWhenLocked(true)
+        setTurnScreenOn(true)
     }
 
     private fun skipAlreadySatisfiedSteps() {
@@ -175,11 +224,18 @@ class MainActivity : ComponentActivity() {
         return when (step) {
             OnboardingStep.NOTIFICATIONS ->
                 Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || hasPermission(Manifest.permission.POST_NOTIFICATIONS)
-            OnboardingStep.LOCATION -> hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+            // Requires the FINE request to have actually been shown, not just COARSE being granted —
+            // otherwise installs that onboarded before FINE was added would never see it (COARSE
+            // alone would already read as "done").
+            OnboardingStep.LOCATION ->
+                hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION) && prefs.getBoolean(KEY_FINE_LOCATION_ASKED, false)
             OnboardingStep.BACKGROUND_LOCATION ->
                 !hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION) || hasPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
             OnboardingStep.BATTERY_OPTIMIZATION ->
                 getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+            OnboardingStep.FULL_SCREEN_ALERT ->
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
+                    getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
         }
     }
 
@@ -189,7 +245,9 @@ class MainActivity : ComponentActivity() {
     private fun requestFor(step: OnboardingStep) {
         when (step) {
             OnboardingStep.NOTIFICATIONS -> notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            OnboardingStep.LOCATION -> locationPermissionLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+            OnboardingStep.LOCATION -> locationPermissionLauncher.launch(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+            )
             OnboardingStep.BACKGROUND_LOCATION ->
                 backgroundLocationPermissionLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
             OnboardingStep.BATTERY_OPTIMIZATION -> {
@@ -198,6 +256,13 @@ class MainActivity : ComponentActivity() {
                     Uri.parse("package:$packageName"),
                 )
                 batteryOptimizationLauncher.launch(intent)
+            }
+            OnboardingStep.FULL_SCREEN_ALERT -> {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                    Uri.parse("package:$packageName"),
+                )
+                fullScreenAlertLauncher.launch(intent)
             }
         }
     }
@@ -210,7 +275,7 @@ class MainActivity : ComponentActivity() {
         )
         OnboardingStep.LOCATION -> OnboardingStepInfo(
             title = "위치 권한",
-            rationale = "현재 위치 주변의 강수 레이더를 확인하려면 위치 권한이 필요해요.",
+            rationale = "정확한 강수 예보를 위해 위치 권한이 필요해요. 다음 화면에서 '정확한 위치'를 함께 켜주세요.",
             actionLabel = "위치 허용",
         )
         OnboardingStep.BACKGROUND_LOCATION -> OnboardingStepInfo(
@@ -222,6 +287,12 @@ class MainActivity : ComponentActivity() {
         OnboardingStep.BATTERY_OPTIMIZATION -> OnboardingStepInfo(
             title = "배터리 최적화 제외",
             rationale = "백그라운드 강수 감시가 중단되지 않으려면 배터리 최적화 대상에서 제외해야 해요.",
+            actionLabel = "설정으로 이동",
+        )
+        OnboardingStep.FULL_SCREEN_ALERT -> OnboardingStepInfo(
+            title = "전체화면 알림",
+            rationale = "비 소식을 화면이 꺼져 있을 때도 즉시 알려드리려면 전체화면 알림 권한이 필요해요. " +
+                "다음 화면에서 이 앱의 전체화면 알림을 허용해주세요.",
             actionLabel = "설정으로 이동",
         )
     }

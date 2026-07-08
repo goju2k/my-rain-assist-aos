@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import com.goju.ribs.myrainassist.MainActivity
 import com.goju.ribs.myrainassist.R
 import com.goju.ribs.myrainassist.analysis.ForecastState
+import com.goju.ribs.myrainassist.data.RadarLegend
 
 object NotificationHelper {
 
@@ -26,6 +27,7 @@ object NotificationHelper {
     const val ALERT_CHANNEL_ID = "rain_monitor_alert"
     const val ONGOING_NOTIFICATION_ID = 1
     private const val ALERT_NOTIFICATION_ID = 100
+    const val EXTRA_WAKE_SCREEN = "wake_screen"
 
     fun createChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -58,19 +60,22 @@ object NotificationHelper {
             .build()
     }
 
-    /** [justStopped] shows the "rain stopped" text for exactly the one poll cycle where the stop notification fires. */
-    fun ongoingTextFor(state: ForecastState, justStopped: Boolean): String = when {
-        justStopped -> "비가 그쳤어요"
-        state == ForecastState.ACTIVE -> "비가 오고 있어요"
-        state == ForecastState.INCOMING -> "비가 곧 올 것 같아요"
-        else -> DEFAULT_ONGOING_TEXT
+    /** [stoppedWasActive] is non-null for exactly the one poll cycle where the stop/retract notification fires: true if it was actually raining first, false if a forecast rain never arrived. */
+    fun ongoingTextFor(state: ForecastState, stoppedWasActive: Boolean?, intensityMmh: Double? = null): String = when (stoppedWasActive) {
+        true -> "비가 그쳤어요"
+        false -> "비가 오지 않고 지나갔어요"
+        null -> when (state) {
+            ForecastState.ACTIVE -> "${RadarLegend.intensityPrefix(intensityMmh)}비가 오고 있어요"
+            ForecastState.INCOMING -> "비가 곧 올 것 같아요"
+            ForecastState.NONE -> DEFAULT_ONGOING_TEXT
+        }
     }
 
     // Past this horizon the linear motion extrapolation is stretched thin (it's fit from only the
     // last ~15 minutes of frames), so the wording should read as a guess rather than a prediction.
     private const val UNCERTAIN_ETA_THRESHOLD_MINUTES = 60
 
-    fun showIncomingRainAlert(context: Context, etaMinutes: Int): String {
+    fun showIncomingRainAlert(context: Context, etaMinutes: Int, intensityMmh: Double? = null): String {
         val hours = etaMinutes / 60
         val minutes = etaMinutes % 60
         val timePhrase = when {
@@ -78,23 +83,25 @@ object NotificationHelper {
             minutes == 0 -> "${hours}시간 뒤"
             else -> "${hours}시간 ${minutes}분 뒤"
         }
+        val prefix = RadarLegend.intensityPrefix(intensityMmh)
         val text = if (etaMinutes > UNCERTAIN_ETA_THRESHOLD_MINUTES) {
-            "${timePhrase}쯤 비가 올 것 같아요"
+            "${timePhrase}쯤 ${prefix}비가 올 것 같아요"
         } else {
-            "$timePhrase 비가 옵니다"
+            "$timePhrase ${prefix}비가 옵니다"
         }
         show(context, "비 소식", text)
         return text
     }
 
-    fun showActiveRainAlert(context: Context): String {
-        val text = "지금 비가 오고 있어요"
+    fun showActiveRainAlert(context: Context, intensityMmh: Double? = null): String {
+        val prefix = RadarLegend.intensityPrefix(intensityMmh)
+        val text = "지금 ${prefix}비가 오고 있어요"
         show(context, "비 소식", text)
         return text
     }
 
-    fun showRainStoppedAlert(context: Context): String {
-        val text = "비가 그쳤어요"
+    fun showRainStoppedAlert(context: Context, wasActive: Boolean): String {
+        val text = if (wasActive) "비가 그쳤어요" else "비가 오지 않고 지나갔어요"
         show(context, "비 소식", text)
         return text
     }
@@ -102,7 +109,18 @@ object NotificationHelper {
     private fun contentIntent(context: Context): PendingIntent = PendingIntent.getActivity(
         context,
         0,
-        Intent(context, MainActivity::class.java),
+        Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    /** Distinct request code/extra from [contentIntent] so MainActivity can tell "user tapped the notification" apart from "the OS launched this full-screen" and only wake+unlock for the latter. */
+    private fun fullScreenIntent(context: Context): PendingIntent = PendingIntent.getActivity(
+        context,
+        1,
+        Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .putExtra(EXTRA_WAKE_SCREEN, true),
         PendingIntent.FLAG_IMMUTABLE,
     )
 
@@ -112,14 +130,18 @@ object NotificationHelper {
         ) {
             return
         }
+        val notificationManager = context.getSystemService(NotificationManager::class.java)
+        val canWakeScreen = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE || notificationManager.canUseFullScreenIntent()
         val notification = NotificationCompat.Builder(context, ALERT_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
             .setContentIntent(contentIntent(context))
+            .apply { if (canWakeScreen) setFullScreenIntent(fullScreenIntent(context), true) }
             .build()
-        context.getSystemService(NotificationManager::class.java).notify(ALERT_NOTIFICATION_ID, notification)
+        notificationManager.notify(ALERT_NOTIFICATION_ID, notification)
     }
 }

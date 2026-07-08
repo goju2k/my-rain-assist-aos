@@ -39,7 +39,7 @@ class LocationFixProvider(context: Context) {
     private suspend fun requestFreshLocation(): Location? = suspendCancellableCoroutine { cont ->
         val cancellationSource = CancellationTokenSource()
         try {
-            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, cancellationSource.token)
+            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellationSource.token)
                 .addOnSuccessListener { location -> cont.resume(location) }
                 .addOnFailureListener {
                     Log.w(TAG, "getCurrentLocation: fusedLocationClient failed", it)
