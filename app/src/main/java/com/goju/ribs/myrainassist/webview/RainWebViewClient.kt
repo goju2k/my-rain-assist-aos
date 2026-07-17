@@ -7,6 +7,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.goju.ribs.myrainassist.notification.NotificationHelper
+import com.goju.ribs.myrainassist.notification.RainEventLog
 import com.goju.ribs.myrainassist.service.NotificationEvent
 import com.goju.ribs.myrainassist.service.NotificationEventBus
 import com.goju.ribs.myrainassist.service.RainForecastBus
@@ -34,21 +35,26 @@ class RainWebViewClient(private val context: Context) : WebViewClient() {
     // fires on the very first load: it must show the notification they just tapped, not a generic
     // idle message, or the tap would look broken. NotificationEventBus is a StateFlow, so its
     // `.value` already holds that last-fired event (if any) regardless of whether anyone was
-    // collecting it when it was published — only fall back to the idle default when nothing has
-    // ever fired (true first-ever launch).
+    // collecting it when it was published — but that's in-memory only, so it resets to null
+    // whenever the app *process* dies (force-stop, low-memory reclaim), even though the last real
+    // alert is still sitting on disk and still accurate. Fall back to that persisted last event
+    // before finally falling back to the generic idle default (true first-ever launch, nothing
+    // has ever fired).
     override fun onPageFinished(view: WebView, url: String?) {
         super.onPageFinished(view, url)
         // Same idea as the notification fallback below: RainMonitorService may already have a
         // computed forecast (blob paths etc.) sitting in the bus from before this page load
         // existed. Push it immediately rather than waiting up to ~5.5 minutes for the next poll.
         RainForecastBus.forecast.value?.let { WebBridge.pushForecastToWebView(view, it) }
-        val event = NotificationEventBus.events.value ?: NotificationEvent(
-            state = "IDLE",
-            message = NotificationHelper.DEFAULT_ONGOING_TEXT,
-            etaMinutes = null,
-            intensityMmh = null,
-            timestampEpochMs = System.currentTimeMillis(),
-        )
+        val event = NotificationEventBus.events.value
+            ?: RainEventLog.lastNotifiedEvent(context)
+            ?: NotificationEvent(
+                state = "IDLE",
+                message = NotificationHelper.DEFAULT_ONGOING_TEXT,
+                etaMinutes = null,
+                intensityMmh = null,
+                timestampEpochMs = System.currentTimeMillis(),
+            )
         // Firing this in the same tick as the applyForecast call above, right at cold load, has
         // been observed to lose the notification text — the page is still mid-hydration at
         // onPageFinished, and the two pushes appear to race there (calling either one alone, or

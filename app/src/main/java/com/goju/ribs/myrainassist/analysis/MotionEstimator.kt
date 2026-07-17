@@ -8,7 +8,19 @@ package com.goju.ribs.myrainassist.analysis
  */
 object MotionEstimator {
 
-    data class BlobMotion(val blob: Blob, val vxCellsPerMin: Double, val vyCellsPerMin: Double, val confidence: Double)
+    /** One earlier frame's actual block-match result — a real observation, not a linear-model guess. */
+    data class FrameMatch(val minutesAgo: Long, val dxCells: Int, val dyCells: Int, val confidence: Double)
+
+    /** [trackedSpanMinutes] is the longest confirmed match span (the oldest earlier frame this blob was actually matched against) — how far back its motion is backed by real observation, not just linear-model guesswork. */
+    data class BlobMotion(
+        val blob: Blob,
+        val vxCellsPerMin: Double,
+        val vyCellsPerMin: Double,
+        val confidence: Double,
+        val trackedSpanMinutes: Long,
+        /** One entry per earlier frame that matched, oldest first — the blob's actual observed track, as opposed to the linear-model forward projection. */
+        val matches: List<FrameMatch>,
+    )
 
     private const val BASE_SEARCH_RADIUS = 4
 
@@ -25,6 +37,7 @@ object MotionEstimator {
             val vxSamples = mutableListOf<Double>()
             val vySamples = mutableListOf<Double>()
             val confidences = mutableListOf<Double>()
+            val matches = mutableListOf<FrameMatch>()
 
             earlierGrids.forEachIndexed { index, older ->
                 val deltaMinutes = minuteDeltas[index]
@@ -35,6 +48,7 @@ object MotionEstimator {
                 vxSamples.add(match.dx / deltaMinutes.toDouble())
                 vySamples.add(match.dy / deltaMinutes.toDouble())
                 confidences.add(match.confidence)
+                matches.add(FrameMatch(deltaMinutes, match.dx, match.dy, match.confidence))
             }
 
             if (vxSamples.isEmpty()) return@mapNotNull null
@@ -43,6 +57,8 @@ object MotionEstimator {
                 vxCellsPerMin = median(vxSamples),
                 vyCellsPerMin = median(vySamples),
                 confidence = confidences.average(),
+                trackedSpanMinutes = matches.maxOf { it.minutesAgo },
+                matches = matches.sortedByDescending { it.minutesAgo },
             )
         }
     }

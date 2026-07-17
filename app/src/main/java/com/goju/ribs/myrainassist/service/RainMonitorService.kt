@@ -1,10 +1,12 @@
 package com.goju.ribs.myrainassist.service
 
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.goju.ribs.myrainassist.analysis.ForecastEngine
 import com.goju.ribs.myrainassist.analysis.NotificationDedup
 import com.goju.ribs.myrainassist.data.RadarApi
@@ -16,8 +18,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
 /**
@@ -31,6 +34,10 @@ class RainMonitorService : Service() {
     private lateinit var locationProvider: LocationFixProvider
     private lateinit var notificationDedup: NotificationDedup
     private var ongoingContentText: String = NotificationHelper.DEFAULT_ONGOING_TEXT
+
+    // Conflated so a burst of foreground-return triggers (e.g. pulling down and dismissing the
+    // notification shade) collapses to a single extra cycle instead of piling up.
+    private val immediateCheckTrigger = Channel<Unit>(Channel.CONFLATED)
 
     override fun onCreate() {
         super.onCreate()
@@ -47,7 +54,12 @@ class RainMonitorService : Service() {
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_CHECK_NOW) {
+            immediateCheckTrigger.trySend(Unit)
+        }
+        return START_STICKY
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -77,7 +89,9 @@ class RainMonitorService : Service() {
         while (true) {
             startOngoingForeground()
             runCatching { runCycle() }.onFailure { Log.w(TAG, "Poll cycle failed", it) }
-            delay(POLL_INTERVAL_MS)
+            // Waits out the normal cadence, but an immediate-check request (app opened/foregrounded)
+            // cuts this short so the next cycle runs right away instead of waiting up to ~5.5 min.
+            withTimeoutOrNull(POLL_INTERVAL_MS) { immediateCheckTrigger.receive() }
         }
     }
 
@@ -114,7 +128,7 @@ class RainMonitorService : Service() {
         Log.d(TAG, "runCycle: state=${result.state} etaMinutes=${result.etaMinutes} nearestRainDistanceKm=${result.nearestRainDistanceKm}")
         RainForecastBus.publish(result)
 
-        val signal = NotificationDedup.Signal(result.etaMinutes, result.nearestRainDistanceKm)
+        val signal = NotificationDedup.Signal(result.etaMinutes, result.nearestRainDistanceKm, result.intensityMmh)
         val action = notificationDedup.evaluate(signal)
         if (action != NotificationDedup.Action.None) {
             val frameDebug = dedupBefore
@@ -139,11 +153,16 @@ class RainMonitorService : Service() {
                     RainEventLog.append(this, "ACTIVE", message, frameDebug)
                     "ACTIVE" to message
                 }
-                is NotificationDedup.Action.NotifyRainStopped -> {
-                    val message = NotificationHelper.showRainStoppedAlert(this, action.wasActive)
-                    val state = if (action.wasActive) "STOPPED" else "MISSED"
-                    RainEventLog.append(this, state, message, frameDebug)
-                    state to message
+                NotificationDedup.Action.NotifyRainStopped -> {
+                    val message = NotificationHelper.showRainStoppedAlert(this)
+                    RainEventLog.append(this, "STOPPED", message, frameDebug)
+                    "STOPPED" to message
+                }
+                NotificationDedup.Action.ResetToIdle -> {
+                    // A forecast never actually arrived — not useful enough to interrupt the user
+                    // with an alert, so just log it for debugging and quietly reset to idle.
+                    RainEventLog.append(this, "MISSED", "비가 오지 않고 지나갔어요 (알림 없이 초기화)", frameDebug)
+                    null
                 }
                 NotificationDedup.Action.None -> null
             }
@@ -159,13 +178,20 @@ class RainMonitorService : Service() {
 
         // Refresh the ongoing notification text right away so it tracks the phase that was just
         // computed, rather than waiting for the next loop iteration's pre-cycle re-assert.
-        val stoppedWasActive = (action as? NotificationDedup.Action.NotifyRainStopped)?.wasActive
-        ongoingContentText = NotificationHelper.ongoingTextFor(result.state, stoppedWasActive, result.intensityMmh)
+        val justStopped = action == NotificationDedup.Action.NotifyRainStopped
+        ongoingContentText = NotificationHelper.ongoingTextFor(result.state, justStopped, result.etaMinutes, result.intensityMmh)
         startOngoingForeground()
     }
 
-    private companion object {
-        const val TAG = "RainMonitorService"
-        const val POLL_INTERVAL_MS = 5 * 60 * 1000L + 30_000L
+    companion object {
+        private const val TAG = "RainMonitorService"
+        private const val POLL_INTERVAL_MS = 5 * 60 * 1000L + 30_000L
+        private const val ACTION_CHECK_NOW = "com.goju.ribs.myrainassist.action.CHECK_NOW"
+
+        /** Requests an out-of-cadence forecast cycle right away, e.g. when the app comes to the foreground. */
+        fun requestImmediateCheck(context: Context) {
+            val intent = Intent(context, RainMonitorService::class.java).setAction(ACTION_CHECK_NOW)
+            ContextCompat.startForegroundService(context, intent)
+        }
     }
 }

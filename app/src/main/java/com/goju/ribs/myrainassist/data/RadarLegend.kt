@@ -76,4 +76,13 @@ object RadarLegend {
         mmh < 3.0 -> "약한 "
         else -> ""
     }
+
+    /** Coarse severity bucket matching the same 약한/보통/강한/매우 강한 boundaries above, for detecting a wording-relevant intensity change while rain is already active. */
+    fun intensityTier(mmh: Double?): Int = when {
+        mmh == null -> -1
+        mmh >= 30.0 -> 3
+        mmh >= 15.0 -> 2
+        mmh >= 3.0 -> 1
+        else -> 0
+    }
 }

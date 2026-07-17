@@ -32,6 +32,19 @@ object ForecastEngine {
     private const val NEARBY_STRONG_MIN_MMH = 15.0
     private const val NEARBY_STRONG_MIN_CELLS = 30
 
+    // Weak echo (< "약한 비" ceiling) still this far out is more likely to dissipate before it
+    // ever arrives than to actually reach the user, so it isn't worth an ETA-based forecast/alert.
+    private const val WEAK_FAR_SUPPRESS_DISTANCE_KM = 10.0
+    private const val WEAK_RAIN_MAX_MMH = 3.0
+
+    // Small cells are usually short-lived (they scatter/dissipate rather than travel far), so a
+    // fast small blob linearly extrapolated 90 minutes out draws a long straight line that reads
+    // as a confident forecast but isn't one. Large, established systems keep the full horizon;
+    // small ones are capped to how far back we actually confirmed their motion (symmetric
+    // past/future window) so the line's length reflects how much real tracking backs it.
+    private const val LARGE_BLOB_MIN_CELLS = 50
+    private const val MIN_FORECAST_HORIZON_MINUTES = PATH_SAMPLE_INTERVAL_MINUTES
+
     fun computeForecast(response: RadarResponse, userLocation: LatLon, nowEpochMs: Long): RainForecastResult? {
         if (response.frames.size < 2) return null
         val mapper = QuadMapper(response.corners)
@@ -41,7 +54,6 @@ object ForecastEngine {
         val latestGrid = PresenceGrid.from(latestFrame)
         val userRow = (userUV.v * (latestGrid.height - 1)).roundToInt()
         val userCol = (userUV.u * (latestGrid.width - 1)).roundToInt()
-        val isRainingNow = latestGrid.inBounds(userRow, userCol) && latestGrid.isPresent(userRow, userCol)
 
         // The latest frame's tm can lag behind the actual current time (e.g. the upstream KMA
         // feed stalling for a while before a fresh frame shows up), so blob positions are known
@@ -52,6 +64,11 @@ object ForecastEngine {
             .toInt()
 
         val blobs = ConnectedComponents.findBlobs(latestGrid, MIN_BLOB_SIZE_CELLS)
+        // A raw single-pixel isPresent() check has no noise filtering, unlike every other rain
+        // signal here (blobs require MIN_BLOB_SIZE_CELLS connected cells) — an isolated
+        // compression/clutter pixel under the user could otherwise flip the state straight to
+        // "raining now" without ever being confirmed as a real precipitation feature.
+        val isRainingNow = blobs.any { blob -> blob.cells.any { it[0] == userRow && it[1] == userCol } }
         val earlierFrames = response.frames.dropLast(1)
         val earlierGrids = earlierFrames.map { PresenceGrid.from(it) }
         val minuteDeltas = earlierFrames.map { latestFrame.epochMinute - it.epochMinute }
@@ -61,9 +78,22 @@ object ForecastEngine {
 
         // Distance uses every detected blob (not just ones with an estimated velocity), since a
         // nearby-but-unmatched blob is still "rain nearby" for the purposes of the stop condition.
+        // Uses the blob's *nearest* cell to the user, not its centroid — a large or elongated blob
+        // can have its centroid many km away while its near edge sits right on top of the user,
+        // which previously made the "rain stopped/passed" check fire while rain pixels were still
+        // visibly overhead.
         val blobDistancesKm = blobs.map { blob ->
-            val centroid = mapper.forwardMap(blob.centroidCol / (latestGrid.width - 1), blob.centroidRow / (latestGrid.height - 1))
-            blob to haversineKm(centroid, userLocation)
+            // blob.cells is never empty (ConnectedComponents only keeps blobs with >= minSizeCells).
+            val nearestCell = blob.cells.minByOrNull { cell ->
+                val dr = cell[0] - userRow
+                val dc = cell[1] - userCol
+                dr * dr + dc * dc
+            }!!
+            val nearestPoint = mapper.forwardMap(
+                nearestCell[1] / (latestGrid.width - 1).toDouble(),
+                nearestCell[0] / (latestGrid.height - 1).toDouble(),
+            )
+            blob to haversineKm(nearestPoint, userLocation)
         }
         val nearestRainDistanceKm = blobDistancesKm.minOfOrNull { it.second }
         val nearbyStrongBlob = blobDistancesKm
@@ -101,6 +131,7 @@ object ForecastEngine {
             nearestRainDistanceKm = nearestRainDistanceKm,
             intensityMmh = intensityMmh,
             latestFrameTm = latestFrame.tm,
+            latestFrameEpochMs = latestFrame.epochMinute * 60_000L,
             frameCount = response.frames.size,
             lagMinutes = lagMinutes,
         )
@@ -143,12 +174,43 @@ object ForecastEngine {
         )
 
         val centroidNow = positionAt(lagMinutes)
-        val path = mutableListOf(PathPoint(0, centroidNow))
-        var arrivalMinutes: Int? = if (haversineKm(centroidNow, userLocation) <= thresholdKm) 0 else null
+
+        // A weak, still-distant cell is more likely to dissipate before it ever gets here than to
+        // actually arrive, so it's excluded from the arrival/ETA math entirely (it still shows up
+        // in `path` for map display, just without feeding a notification-worthy ETA). Re-evaluated
+        // fresh every poll cycle, so as soon as it's genuinely within range this stops applying.
+        val suppressArrival = blob.peakMmh < WEAK_RAIN_MAX_MMH &&
+            haversineKm(centroidNow, userLocation) > WEAK_FAR_SUPPRESS_DISTANCE_KM
+
+        // Small blobs only get to extrapolate as far forward as their motion is actually backed by
+        // observation (see [MotionEstimator.BlobMotion.trackedSpanMinutes]) — a floor keeps them
+        // from collapsing to a single point when only one earlier frame was matched.
+        val horizonMinutes = if (blob.sizeCells >= LARGE_BLOB_MIN_CELLS) {
+            MAX_FORECAST_MINUTES
+        } else {
+            motion.trackedSpanMinutes.toInt().coerceIn(MIN_FORECAST_HORIZON_MINUTES, MAX_FORECAST_MINUTES)
+        }
+
+        // Real observed track (negative minutesFromNow), one point per earlier frame that actually
+        // matched — as opposed to everything from t=0 onward, which is the linear-model forecast.
+        // Each point uses its own match's displacement (not the aggregate median rate), so this is
+        // the blob's true past path, not a backward projection of the future line. See
+        // docs/webview-interface.md 3.1.1 for how the web should render the past/future split.
+        val pastPoints = motion.matches.map { match ->
+            val pos = offsetLatLon(
+                centroidAtTm,
+                eastKm = -match.dxCells * kmPerCellX,
+                northKm = match.dyCells * kmPerCellY,
+            )
+            PathPoint(-(lagMinutes + match.minutesAgo.toInt()), pos)
+        }
+
+        val path = (pastPoints + PathPoint(0, centroidNow)).toMutableList()
+        var arrivalMinutes: Int? = if (!suppressArrival && haversineKm(centroidNow, userLocation) <= thresholdKm) 0 else null
         var t = FORECAST_STEP_MINUTES
-        while (t <= MAX_FORECAST_MINUTES) {
+        while (t <= horizonMinutes) {
             val pos = positionAt(lagMinutes + t)
-            if (arrivalMinutes == null && haversineKm(pos, userLocation) <= thresholdKm) {
+            if (!suppressArrival && arrivalMinutes == null && haversineKm(pos, userLocation) <= thresholdKm) {
                 arrivalMinutes = t
             }
             if (t % PATH_SAMPLE_INTERVAL_MINUTES == 0) path.add(PathPoint(t, pos))
@@ -159,6 +221,11 @@ object ForecastEngine {
             id = "blob-${blob.id}",
             sizeCells = blob.sizeCells,
             centroid = centroidNow,
+            // Position as actually observed in the latest radar frame (tm), before the lag
+            // extrapolation above pushes it forward to "now" — lets the web line up the drawn
+            // path with whatever the (possibly stale) radar image is currently showing. See
+            // docs/webview-interface.md.
+            observedCentroid = centroidAtTm,
             headingDeg = headingDeg,
             speedKmh = speedKmh,
             path = path,

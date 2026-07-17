@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.app.NotificationManager
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -36,7 +35,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import com.goju.ribs.myrainassist.notification.NotificationHelper
 import com.goju.ribs.myrainassist.notification.RainEventLog
 import com.goju.ribs.myrainassist.service.NotificationEventBus
 import com.goju.ribs.myrainassist.service.RainForecastBus
@@ -51,21 +49,22 @@ import kotlinx.coroutines.launch
 
 private const val KEY_FINE_LOCATION_ASKED = "fine_location_asked"
 
-private enum class OnboardingStep { NOTIFICATIONS, LOCATION, BACKGROUND_LOCATION, BATTERY_OPTIMIZATION, FULL_SCREEN_ALERT }
+private enum class OnboardingStep { NOTIFICATIONS, LOCATION, BACKGROUND_LOCATION, BATTERY_OPTIMIZATION }
 
 private val ONBOARDING_STEPS = listOf(
     OnboardingStep.NOTIFICATIONS,
     OnboardingStep.LOCATION,
     OnboardingStep.BACKGROUND_LOCATION,
     OnboardingStep.BATTERY_OPTIMIZATION,
-    OnboardingStep.FULL_SCREEN_ALERT,
 )
 
 class MainActivity : ComponentActivity() {
 
     private var webView: WebView? = null
     private var stepIndex by mutableIntStateOf(0)
-    private var wasStopped = false
+    // Starts true so the very first onResume after a cold launch is also treated as "returning to
+    // the foreground" (immediate forecast check, position refresh), not just actual background returns.
+    private var wasStopped = true
 
     private lateinit var prefs: SharedPreferences
 
@@ -82,13 +81,10 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { advance() }
     private val batteryOptimizationLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { advance() }
-    private val fullScreenAlertLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { advance() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        applyWakeScreenFlags(intent)
         prefs = getSharedPreferences("onboarding_state", Context.MODE_PRIVATE)
         skipAlreadySatisfiedSteps()
 
@@ -178,6 +174,10 @@ class MainActivity : ComponentActivity() {
             // WebView interface re-locates and redraws in place (see docs/webview-interface.md).
             if (wasStopped) {
                 webView?.let { WebBridge.requestPositionRefresh(it) }
+                // Otherwise the displayed state can lag up to a full poll cycle (~5.5 min) behind
+                // reality — e.g. rain already started or already stopped by the time the user opens
+                // the app, but the alert/ongoing text still reflects the last scheduled check.
+                RainMonitorService.requestImmediateCheck(this)
                 wasStopped = false
             }
         }
@@ -191,14 +191,6 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        applyWakeScreenFlags(intent)
-    }
-
-    /** Set on the alert notification's full-screen intent so a rain alert wakes and unlocks the screen like an incoming call, instead of sitting unseen while the screen is off. */
-    private fun applyWakeScreenFlags(intent: Intent) {
-        if (!intent.getBooleanExtra(NotificationHelper.EXTRA_WAKE_SCREEN, false)) return
-        setShowWhenLocked(true)
-        setTurnScreenOn(true)
     }
 
     private fun skipAlreadySatisfiedSteps() {
@@ -233,9 +225,6 @@ class MainActivity : ComponentActivity() {
                 !hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION) || hasPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
             OnboardingStep.BATTERY_OPTIMIZATION ->
                 getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
-            OnboardingStep.FULL_SCREEN_ALERT ->
-                Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
-                    getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
         }
     }
 
@@ -256,13 +245,6 @@ class MainActivity : ComponentActivity() {
                     Uri.parse("package:$packageName"),
                 )
                 batteryOptimizationLauncher.launch(intent)
-            }
-            OnboardingStep.FULL_SCREEN_ALERT -> {
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
-                    Uri.parse("package:$packageName"),
-                )
-                fullScreenAlertLauncher.launch(intent)
             }
         }
     }
@@ -287,12 +269,6 @@ class MainActivity : ComponentActivity() {
         OnboardingStep.BATTERY_OPTIMIZATION -> OnboardingStepInfo(
             title = "배터리 최적화 제외",
             rationale = "백그라운드 강수 감시가 중단되지 않으려면 배터리 최적화 대상에서 제외해야 해요.",
-            actionLabel = "설정으로 이동",
-        )
-        OnboardingStep.FULL_SCREEN_ALERT -> OnboardingStepInfo(
-            title = "전체화면 알림",
-            rationale = "비 소식을 화면이 꺼져 있을 때도 즉시 알려드리려면 전체화면 알림 권한이 필요해요. " +
-                "다음 화면에서 이 앱의 전체화면 알림을 허용해주세요.",
             actionLabel = "설정으로 이동",
         )
     }

@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.goju.ribs.myrainassist.MainActivity
@@ -27,7 +28,9 @@ object NotificationHelper {
     const val ALERT_CHANNEL_ID = "rain_monitor_alert"
     const val ONGOING_NOTIFICATION_ID = 1
     private const val ALERT_NOTIFICATION_ID = 100
-    const val EXTRA_WAKE_SCREEN = "wake_screen"
+    // Long enough for the user to notice the screen light up and glance at the lock screen
+    // notification; the OS will let the screen time out normally after this.
+    private const val SCREEN_WAKE_DURATION_MS = 10_000L
 
     fun createChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -60,13 +63,19 @@ object NotificationHelper {
             .build()
     }
 
-    /** [stoppedWasActive] is non-null for exactly the one poll cycle where the stop/retract notification fires: true if it was actually raining first, false if a forecast rain never arrived. */
-    fun ongoingTextFor(state: ForecastState, stoppedWasActive: Boolean?, intensityMmh: Double? = null): String = when (stoppedWasActive) {
-        true -> "비가 그쳤어요"
-        false -> "비가 오지 않고 지나갔어요"
-        null -> when (state) {
+    /**
+     * [justStopped] is true for exactly the one poll cycle where rain that was actually overhead
+     * just cleared. [etaMinutes] mirrors [showIncomingRainAlert]'s wording (same phrase builder) so
+     * the always-on ongoing notification never reads vaguer than the alert that was just shown for
+     * the same state — they used to drift apart (e.g. "비가 곧 올 것 같아요" here vs "20분 뒤 비가
+     * 옵니다" in the alert).
+     */
+    fun ongoingTextFor(state: ForecastState, justStopped: Boolean, etaMinutes: Int?, intensityMmh: Double? = null): String = if (justStopped) {
+        "비가 그쳤어요"
+    } else {
+        when (state) {
             ForecastState.ACTIVE -> "${RadarLegend.intensityPrefix(intensityMmh)}비가 오고 있어요"
-            ForecastState.INCOMING -> "비가 곧 올 것 같아요"
+            ForecastState.INCOMING -> etaMinutes?.let { incomingRainText(it, intensityMmh) } ?: DEFAULT_ONGOING_TEXT
             ForecastState.NONE -> DEFAULT_ONGOING_TEXT
         }
     }
@@ -75,7 +84,7 @@ object NotificationHelper {
     // last ~15 minutes of frames), so the wording should read as a guess rather than a prediction.
     private const val UNCERTAIN_ETA_THRESHOLD_MINUTES = 60
 
-    fun showIncomingRainAlert(context: Context, etaMinutes: Int, intensityMmh: Double? = null): String {
+    private fun incomingRainText(etaMinutes: Int, intensityMmh: Double?): String {
         val hours = etaMinutes / 60
         val minutes = etaMinutes % 60
         val timePhrase = when {
@@ -84,11 +93,15 @@ object NotificationHelper {
             else -> "${hours}시간 ${minutes}분 뒤"
         }
         val prefix = RadarLegend.intensityPrefix(intensityMmh)
-        val text = if (etaMinutes > UNCERTAIN_ETA_THRESHOLD_MINUTES) {
+        return if (etaMinutes > UNCERTAIN_ETA_THRESHOLD_MINUTES) {
             "${timePhrase}쯤 ${prefix}비가 올 것 같아요"
         } else {
             "$timePhrase ${prefix}비가 옵니다"
         }
+    }
+
+    fun showIncomingRainAlert(context: Context, etaMinutes: Int, intensityMmh: Double? = null): String {
+        val text = incomingRainText(etaMinutes, intensityMmh)
         show(context, "비 소식", text)
         return text
     }
@@ -100,8 +113,8 @@ object NotificationHelper {
         return text
     }
 
-    fun showRainStoppedAlert(context: Context, wasActive: Boolean): String {
-        val text = if (wasActive) "비가 그쳤어요" else "비가 오지 않고 지나갔어요"
+    fun showRainStoppedAlert(context: Context): String {
+        val text = "비가 그쳤어요"
         show(context, "비 소식", text)
         return text
     }
@@ -114,24 +127,14 @@ object NotificationHelper {
         PendingIntent.FLAG_IMMUTABLE,
     )
 
-    /** Distinct request code/extra from [contentIntent] so MainActivity can tell "user tapped the notification" apart from "the OS launched this full-screen" and only wake+unlock for the latter. */
-    private fun fullScreenIntent(context: Context): PendingIntent = PendingIntent.getActivity(
-        context,
-        1,
-        Intent(context, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .putExtra(EXTRA_WAKE_SCREEN, true),
-        PendingIntent.FLAG_IMMUTABLE,
-    )
-
     private fun show(context: Context, title: String, text: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             return
         }
+        wakeScreen(context)
         val notificationManager = context.getSystemService(NotificationManager::class.java)
-        val canWakeScreen = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE || notificationManager.canUseFullScreenIntent()
         val notification = NotificationCompat.Builder(context, ALERT_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
@@ -140,8 +143,23 @@ object NotificationHelper {
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
             .setContentIntent(contentIntent(context))
-            .apply { if (canWakeScreen) setFullScreenIntent(fullScreenIntent(context), true) }
             .build()
         notificationManager.notify(ALERT_NOTIFICATION_ID, notification)
+    }
+
+    /**
+     * Turns the display on so a rain alert isn't missed while the phone is asleep, without
+     * launching the app over the lock screen — the screen simply lights up on the lock screen
+     * showing the notification, same as an incoming text message would. A plain high-priority
+     * notification alone does not wake a sleeping screen, which is why this is needed.
+     */
+    @Suppress("DEPRECATION")
+    private fun wakeScreen(context: Context) {
+        val powerManager = context.getSystemService(PowerManager::class.java)
+        val wakeLock = powerManager.newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+            "$ALERT_CHANNEL_ID:screenWake",
+        )
+        wakeLock.acquire(SCREEN_WAKE_DURATION_MS)
     }
 }

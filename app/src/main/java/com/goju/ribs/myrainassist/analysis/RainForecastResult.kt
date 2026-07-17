@@ -11,7 +11,10 @@ data class PathPoint(val minutesFromNow: Int, val position: LatLon)
 data class BlobForecast(
     val id: String,
     val sizeCells: Int,
+    /** Lag-corrected "now" position — same point as `path[0]`. */
     val centroid: LatLon,
+    /** Position as actually observed in the latest radar frame (tm), before lag-extrapolation to "now". */
+    val observedCentroid: LatLon,
     val headingDeg: Double,
     val speedKmh: Double,
     val path: List<PathPoint>,
@@ -32,6 +35,8 @@ data class RainForecastResult(
     val intensityMmh: Double?,
     /** tm of the radar frame this forecast was computed from, kept for notification-time debugging. */
     val latestFrameTm: String,
+    /** Epoch ms of [latestFrameTm] — lets the web reconcile forecast freshness against its own radar image. */
+    val latestFrameEpochMs: Long,
     /** Number of frames returned by the radar API this cycle. */
     val frameCount: Int,
     /** Minutes the latest frame's tm lagged behind [generatedAtEpochMs]. */
@@ -39,6 +44,7 @@ data class RainForecastResult(
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("generatedAtEpochMs", generatedAtEpochMs)
+        put("radarFrameEpochMs", latestFrameEpochMs)
         put("userLocation", JSONObject().apply {
             put("lat", userLocation.lat)
             put("lon", userLocation.lon)
@@ -55,7 +61,9 @@ data class RainForecastResult(
     }
 
     private fun BlobForecast.isFinite(): Boolean =
-        centroid.lat.isFinite() && centroid.lon.isFinite() && headingDeg.isFinite() && speedKmh.isFinite() &&
+        centroid.lat.isFinite() && centroid.lon.isFinite() &&
+            observedCentroid.lat.isFinite() && observedCentroid.lon.isFinite() &&
+            headingDeg.isFinite() && speedKmh.isFinite() &&
             path.all { it.position.lat.isFinite() && it.position.lon.isFinite() }
 
     private fun BlobForecast.toJson(): JSONObject = JSONObject().apply {
@@ -64,6 +72,10 @@ data class RainForecastResult(
         put("centroid", JSONObject().apply {
             put("lat", centroid.lat)
             put("lon", centroid.lon)
+        })
+        put("observedCentroid", JSONObject().apply {
+            put("lat", observedCentroid.lat)
+            put("lon", observedCentroid.lon)
         })
         put("headingDeg", headingDeg)
         put("speedKmh", speedKmh)
