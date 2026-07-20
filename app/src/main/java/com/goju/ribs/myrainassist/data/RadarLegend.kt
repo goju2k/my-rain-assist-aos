@@ -41,6 +41,15 @@ object RadarLegend {
     const val RAIN_THRESHOLD_INDEX = 22
     const val NO_DATA_INDEX = 255
 
+    /**
+     * Indices at or below this (>=70 mm/h) are the darkest legend colors — even Korea's heaviest
+     * typhoon rainfall rarely sustains 70mm/h, so a single-cycle reading at or above this is far
+     * more likely to be an anti-aliased/alpha-blended PNG pixel snapping to a dark legend color via
+     * nearest-color matching than genuine rain. Readings this severe need corroboration from
+     * neighboring cells; see [com.goju.ribs.myrainassist.analysis.PresenceGrid.corroboratedValueAt].
+     */
+    const val EXTREME_INDEX_THRESHOLD = 3
+
     /** Nearest-color match against [LEVELS] — PNG edge pixels get anti-aliased, so an exact match isn't guaranteed. */
     fun nearestIndex(r: Int, g: Int, b: Int): Int {
         var bestIndex = LEVELS[0].index

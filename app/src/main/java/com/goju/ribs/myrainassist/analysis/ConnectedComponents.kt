@@ -43,7 +43,8 @@ object ConnectedComponents {
                     val (r, c) = queue.removeFirst()
                     cells.add(intArrayOf(r, c))
                     val value = grid.valueAt(r, c)
-                    if (value < minIndexSeen) minIndexSeen = value
+                    val correctedValue = grid.corroboratedValueAt(r, c)
+                    if (correctedValue < minIndexSeen) minIndexSeen = correctedValue
                     val weight = (255 - value).toDouble()
                     weightSum += weight
                     rowAcc += r * weight

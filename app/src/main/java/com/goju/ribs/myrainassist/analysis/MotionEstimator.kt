@@ -51,7 +51,22 @@ object MotionEstimator {
                 matches.add(FrameMatch(deltaMinutes, match.dx, match.dy, match.confidence))
             }
 
-            if (vxSamples.isEmpty()) return@mapNotNull null
+            // No earlier frame matched well enough to back a velocity estimate — rather than
+            // dropping the blob entirely (which would silently exclude it from arrival/ETA
+            // math even while it sits right on top of the user), fall back to assuming it's
+            // stationary. That's a conservative default: it won't fabricate an approach that
+            // isn't backed by observation, but a blob already within arrival range still
+            // reports arrivalMinutes=0 instead of vanishing from the forecast.
+            if (vxSamples.isEmpty()) {
+                return@mapNotNull BlobMotion(
+                    blob = blob,
+                    vxCellsPerMin = 0.0,
+                    vyCellsPerMin = 0.0,
+                    confidence = 0.0,
+                    trackedSpanMinutes = 0,
+                    matches = emptyList(),
+                )
+            }
             BlobMotion(
                 blob = blob,
                 vxCellsPerMin = median(vxSamples),

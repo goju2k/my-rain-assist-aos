@@ -20,7 +20,16 @@ object ForecastEngine {
     private const val MIN_BLOB_SIZE_CELLS = 9
     private const val MIN_ARRIVAL_THRESHOLD_KM = 3.0
     private const val ARRIVAL_THRESHOLD_CELL_MULTIPLIER = 1.5
-    private const val MAX_FORECAST_MINUTES = 90
+    // How far ahead to extrapolate a blob's straight-line path/arrival — separate from
+    // MAX_LAG_MINUTES below, which bounds a different thing (frame staleness correction).
+    // The radar API only ever gives ~4 frames of history (~20-25 tracked minutes), so a 90-minute
+    // straight-line forecast drawn off that little confirmed motion reads as far more confident
+    // than it is (the drawn future segment could end up 3-6x longer than the observed past
+    // segment). Capped to how far a real measurement run could plausibly extend.
+    private const val MAX_FORECAST_MINUTES = 30
+    // Upper bound for lagMinutes (how stale the latest radar frame is vs. now) — unrelated to how
+    // far into the future a blob's path is drawn.
+    private const val MAX_LAG_MINUTES = 90
     private const val FORECAST_STEP_MINUTES = 5
     private const val PATH_SAMPLE_INTERVAL_MINUTES = 15
     private const val KM_PER_DEGREE_LAT = 111.32
@@ -38,10 +47,11 @@ object ForecastEngine {
     private const val WEAK_RAIN_MAX_MMH = 3.0
 
     // Small cells are usually short-lived (they scatter/dissipate rather than travel far), so a
-    // fast small blob linearly extrapolated 90 minutes out draws a long straight line that reads
-    // as a confident forecast but isn't one. Large, established systems keep the full horizon;
-    // small ones are capped to how far back we actually confirmed their motion (symmetric
-    // past/future window) so the line's length reflects how much real tracking backs it.
+    // fast small blob linearly extrapolated MAX_FORECAST_MINUTES out draws a long straight line
+    // that reads as a confident forecast but isn't one. Large, established systems keep the full
+    // (now-shortened) horizon; small ones are capped to how far back we actually confirmed their
+    // motion (symmetric past/future window) so the line's length reflects how much real tracking
+    // backs it.
     private const val LARGE_BLOB_MIN_CELLS = 50
     private const val MIN_FORECAST_HORIZON_MINUTES = PATH_SAMPLE_INTERVAL_MINUTES
 
@@ -60,7 +70,7 @@ object ForecastEngine {
         // only as of tm, not as of now. Extrapolate forward by this lag before projecting arrival
         // times, otherwise ETA/state would be computed as if tm were the current moment.
         val lagMinutes = ((nowEpochMs / 60_000) - latestFrame.epochMinute)
-            .coerceIn(0, MAX_FORECAST_MINUTES.toLong())
+            .coerceIn(0, MAX_LAG_MINUTES.toLong())
             .toInt()
 
         val blobs = ConnectedComponents.findBlobs(latestGrid, MIN_BLOB_SIZE_CELLS)
@@ -115,7 +125,7 @@ object ForecastEngine {
         }
 
         val intensityMmh = when {
-            state == ForecastState.ACTIVE && isRainingNow -> latestGrid.mmhAt(userRow, userCol)
+            state == ForecastState.ACTIVE && isRainingNow -> latestGrid.corroboratedMmhAt(userRow, userCol)
             state == ForecastState.ACTIVE && nearbyStrongBlob != null -> nearbyStrongBlob.peakMmh
             state == ForecastState.ACTIVE -> blobForecasts.firstOrNull { it.arrivalMinutes == 0 }?.peakMmh
             state == ForecastState.INCOMING -> blobForecasts.filter { it.arrivalMinutes != null }.minByOrNull { it.arrivalMinutes!! }?.peakMmh
