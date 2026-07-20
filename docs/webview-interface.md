@@ -49,6 +49,12 @@ window.RainAssistBridge = {
 
 강수 예보의 기하/상태 데이터. 백그라운드 폴링 주기(~5.5분)마다, **페이지 로드 완료 직후(이미 계산된 값이 있으면)**, 그리고 **앱이 포그라운드로 돌아올 때 마지막 값을 즉시 재전송**합니다. 텍스트 문구는 포함하지 않습니다 — 지도 위 강수 경로(특히 `blobs`) 렌더링용입니다. 내 위치에 비 예보가 없어도(`state: "NONE"`) `blobs`는 채워질 수 있으니, 주변 강수 셀 경로 표시에는 `forecast.state`가 아니라 `blobs` 존재 여부를 보세요.
 
+> `blobs`에는 "약한 비" 등급(peakMmh < 3.0mm/h) 미만인 셀은 포함되지 않습니다. 레이더 격자 전체에서
+> 잡히는 강수 셀 대다수가 이 등급이라(배경색과 거의 구분 안 되는 옅은 하늘색), 전부 점/경로로
+> 그리면 실제 눈에 보이는 구름 없이 점만 찍힌 것처럼 보이는 문제가 있었습니다. `forecast.state`나
+> `intensityMmh` 계산에는 이 등급도 그대로 포함되므로(알림/ETA 로직은 영향 없음), 화면에 그려지는
+> `blobs` 개수만 줄어든 것입니다.
+
 > ⚠️ **알려진 레이스**: 페이지 로드 직후 `applyForecast`와 `showNotification`이 같은 tick에 연달아 호출되면(둘 다 hydration이 안 끝난 시점) `showNotification`의 문구가 사라지는 현상이 관찰됐습니다. 페이지가 이미 안정된 상태에서 각각 단독으로 호출하면 재현되지 않습니다 — 초기 렌더링 시점의 상태 업데이트 경쟁(race)으로 보입니다. 네이티브 쪽에서 두 호출 사이에 300ms 지연을 넣어 우회했지만, 근본 원인은 웹 쪽 초기 hydration 로직에 있을 가능성이 높습니다.
 
 > 기존 `requestDrawRainPathVector(json)` 전역 함수 호출을 대체합니다. 페이로드 스키마는 100% 동일하고 `intensityMmh`/`peakMmh` 필드만 추가됐습니다 — `requestDrawRainPathVector`를 이미 구현했다면 함수를 `window.RainAssistBridge.applyForecast`로 옮기기만 하면 됩니다.

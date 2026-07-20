@@ -132,12 +132,20 @@ object ForecastEngine {
             else -> null
         }
 
+        // Every blob across the whole grid ends up here (findBlobs has no intensity filter), and
+        // most detected cells are "약한 비" (< 3mm/h) — a shade of blue barely distinguishable
+        // from the no-rain background. Drawing a path/dot for those reads as "nothing here" to the
+        // eye even though the cell is technically present, so only forward blobs that would
+        // actually look like rain on the map. arrivalMinutes/state/intensity above already used
+        // the unfiltered blobForecasts, so this filter only affects what's drawn.
+        val visibleBlobForecasts = blobForecasts.filter { it.peakMmh >= WEAK_RAIN_MAX_MMH }
+
         return RainForecastResult(
             generatedAtEpochMs = nowEpochMs,
             userLocation = userLocation,
             state = state,
             etaMinutes = if (activeNow) 0 else etaRounded,
-            blobs = blobForecasts,
+            blobs = visibleBlobForecasts,
             nearestRainDistanceKm = nearestRainDistanceKm,
             intensityMmh = intensityMmh,
             latestFrameTm = latestFrame.tm,

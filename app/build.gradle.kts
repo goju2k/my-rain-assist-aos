@@ -6,6 +6,11 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Bump by 0.1 (and versionCode by 1) each time a build is handed out — see the APK renaming
+// block below, which names every output "raining-now-v<appVersionName>.apk" from this.
+val appVersionName = "0.1"
+val appVersionCode = 1
+
 // Loaded from a gitignored properties file (see keystore.properties.example) rather than
 // hardcoded, so the release signing key and its password never end up in version control.
 // Absent on machines/CI that don't hold the release key — release builds there fall back to
@@ -29,8 +34,8 @@ android {
         applicationId = "com.goju.ribs.myrainassist"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -64,6 +69,14 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("raining-now-v$appVersionName.apk")
+        }
     }
 }
 
