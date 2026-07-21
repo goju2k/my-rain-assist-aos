@@ -31,6 +31,7 @@ object ConnectedComponents {
                 if (visited[row][col] || !grid.isPresent(row, col)) continue
 
                 val cells = mutableListOf<IntArray>()
+                val correctedValues = mutableListOf<Int>()
                 var weightSum = 0.0
                 var rowAcc = 0.0
                 var colAcc = 0.0
@@ -44,6 +45,7 @@ object ConnectedComponents {
                     cells.add(intArrayOf(r, c))
                     val value = grid.valueAt(r, c)
                     val correctedValue = grid.corroboratedValueAt(r, c)
+                    correctedValues.add(correctedValue)
                     if (correctedValue < minIndexSeen) minIndexSeen = correctedValue
                     val weight = (255 - value).toDouble()
                     weightSum += weight
@@ -63,19 +65,28 @@ object ConnectedComponents {
                 if (cells.size >= minSizeCells) {
                     val rawCentroidRow = if (weightSum > 0) rowAcc / weightSum else cells.map { it[0] }.average()
                     val rawCentroidCol = if (weightSum > 0) colAcc / weightSum else cells.map { it[1] }.average()
-                    // Snap to the blob's own nearest cell: the plain (intensity-weighted) mean of
-                    // a concave or arc-shaped blob's cells — a curved rain band, a ring — can land
-                    // in a gap with no rain pixel at all, reporting a position that visibly isn't
-                    // on the cloud even in the very same frame it was computed from. Confirmed
-                    // against live radar data: ~4% of real blobs had a raw centroid up to ~1.5km
-                    // off their own footprint.
-                    val nearestCell = cells.minByOrNull { cell ->
+                    fun nearestTo(candidates: List<IntArray>): IntArray = candidates.minByOrNull { cell ->
                         val dr = cell[0] - rawCentroidRow
                         val dc = cell[1] - rawCentroidCol
                         dr * dr + dc * dc
                     }!!
-                    val centroidRow = nearestCell[0].toDouble()
-                    val centroidCol = nearestCell[1].toDouble()
+                    // Korea's fronts mostly track west-to-east, which stretches a lot of blobs into
+                    // long, thin shapes — the plain weighted-mean position ends up somewhere along
+                    // that length that often doesn't read as "the cloud" on the map. When the blob
+                    // actually varies in intensity, anchor on its most intense cell instead (ties
+                    // broken by proximity to the mean, to stay representative rather than arbitrary)
+                    // — that's the part a person looking at the radar would call the cloud's center.
+                    // A uniformly-colored blob has no such peak to anchor on, so it keeps the old
+                    // mean-position-snapped-to-nearest-cell behavior.
+                    val hasIntensityVariation = correctedValues.any { it != correctedValues[0] }
+                    val centroidCell = if (hasIntensityVariation) {
+                        val peakCells = cells.indices.filter { correctedValues[it] == minIndexSeen }.map { cells[it] }
+                        nearestTo(peakCells)
+                    } else {
+                        nearestTo(cells)
+                    }
+                    val centroidRow = centroidCell[0].toDouble()
+                    val centroidCol = centroidCell[1].toDouble()
                     val peakMmh = RadarLegend.mmhForIndex(minIndexSeen)
                     blobs.add(Blob(nextId++, cells, centroidRow, centroidCol, cells.size, peakMmh))
                 }
