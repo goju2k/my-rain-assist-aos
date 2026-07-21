@@ -17,6 +17,9 @@ import kotlin.math.sqrt
  */
 object ForecastEngine {
 
+    /** A blob's distance to the user and the corroborated reading at the point closest to them — not the blob's overall peak, which can sit far away inside the same connected blob. */
+    private data class BlobProximity(val blob: Blob, val distanceKm: Double, val nearestCellMmh: Double)
+
     private const val MIN_BLOB_SIZE_CELLS = 9
     private const val MIN_ARRIVAL_THRESHOLD_KM = 3.0
     private const val ARRIVAL_THRESHOLD_CELL_MULTIPLIER = 1.5
@@ -34,9 +37,10 @@ object ForecastEngine {
     private const val PATH_SAMPLE_INTERVAL_MINUTES = 15
     private const val KM_PER_DEGREE_LAT = 111.32
 
-    // A strong, sizeable cell this close counts as "raining here" even if the exact pixel under
-    // the user is still dry — light scattered rain nearby genuinely isn't raining on you yet, but
-    // a large storm core this close almost certainly reaches you before the radar frame catches up.
+    // Does NOT count as "raining here" on its own — being close to a strong cell isn't the same
+    // as it being overhead, and the app should say "raining" only when the radar actually shows
+    // that. This only supplies a more honest intensity reading (see nearbyStrongBlob below) for
+    // cycles where [isRainingNow] or [minEta] already established ACTIVE some other way.
     private const val NEARBY_STRONG_RADIUS_KM = 3.0
     private const val NEARBY_STRONG_MIN_MMH = 15.0
     private const val NEARBY_STRONG_MIN_CELLS = 30
@@ -92,7 +96,13 @@ object ForecastEngine {
         // can have its centroid many km away while its near edge sits right on top of the user,
         // which previously made the "rain stopped/passed" check fire while rain pixels were still
         // visibly overhead.
-        val blobDistancesKm = blobs.map { blob ->
+        //
+        // Also reads the corroborated mmh at that same nearest cell (not blob.peakMmh, which is
+        // the heaviest reading anywhere in the whole connected blob) — a widespread weak-rain
+        // system spanning many km can connect into one blob with a stray intense-looking patch
+        // far from the user, and reporting that far-away peak as "the rain near you" produced
+        // 매우 강한 비(90-110mm/h) alerts on days with only light rain locally.
+        val blobProximities = blobs.map { blob ->
             // blob.cells is never empty (ConnectedComponents only keeps blobs with >= minSizeCells).
             val nearestCell = blob.cells.minByOrNull { cell ->
                 val dr = cell[0] - userRow
@@ -103,21 +113,26 @@ object ForecastEngine {
                 nearestCell[1] / (latestGrid.width - 1).toDouble(),
                 nearestCell[0] / (latestGrid.height - 1).toDouble(),
             )
-            blob to haversineKm(nearestPoint, userLocation)
+            BlobProximity(
+                blob = blob,
+                distanceKm = haversineKm(nearestPoint, userLocation),
+                nearestCellMmh = latestGrid.corroboratedMmhAt(nearestCell[0], nearestCell[1]),
+            )
         }
-        val nearestRainDistanceKm = blobDistancesKm.minOfOrNull { it.second }
-        val nearbyStrongBlob = blobDistancesKm
-            .filter { (blob, distanceKm) ->
-                distanceKm <= NEARBY_STRONG_RADIUS_KM && blob.sizeCells >= NEARBY_STRONG_MIN_CELLS && blob.peakMmh >= NEARBY_STRONG_MIN_MMH
-            }
-            .minByOrNull { it.second }
-            ?.first
+        val nearestRainDistanceKm = blobProximities.minOfOrNull { it.distanceKm }
+        val nearbyStrongBlob = blobProximities
+            .filter { it.distanceKm <= NEARBY_STRONG_RADIUS_KM && it.blob.sizeCells >= NEARBY_STRONG_MIN_CELLS && it.nearestCellMmh >= NEARBY_STRONG_MIN_MMH }
+            .minByOrNull { it.distanceKm }
 
         val minEta = blobForecasts.mapNotNull { it.arrivalMinutes }.minOrNull()
         val etaRounded = minEta?.let { roundToNearest(it, 10) }
         // A lag-corrected blob forecast can already place a blob on top of the user (minEta == 0)
-        // even though the stale grid's isRainingNow check hasn't caught up yet.
-        val activeNow = isRainingNow || minEta == 0 || nearbyStrongBlob != null
+        // even though the stale grid's isRainingNow check hasn't caught up yet. Being close to a
+        // strong cell (nearbyStrongBlob) does NOT make this true on its own — a storm sitting a
+        // few km away with no confirmed motion toward the user is "incoming soon" at worst, not
+        // "raining here right now". The radar picture and the reported state must agree: no cloud
+        // overhead means not ACTIVE, however strong or close the nearest blob is.
+        val activeNow = isRainingNow || minEta == 0
         val state = when {
             activeNow -> ForecastState.ACTIVE
             etaRounded != null -> ForecastState.INCOMING
@@ -126,7 +141,7 @@ object ForecastEngine {
 
         val intensityMmh = when {
             state == ForecastState.ACTIVE && isRainingNow -> latestGrid.corroboratedMmhAt(userRow, userCol)
-            state == ForecastState.ACTIVE && nearbyStrongBlob != null -> nearbyStrongBlob.peakMmh
+            state == ForecastState.ACTIVE && nearbyStrongBlob != null -> nearbyStrongBlob.nearestCellMmh
             state == ForecastState.ACTIVE -> blobForecasts.firstOrNull { it.arrivalMinutes == 0 }?.peakMmh
             state == ForecastState.INCOMING -> blobForecasts.filter { it.arrivalMinutes != null }.minByOrNull { it.arrivalMinutes!! }?.peakMmh
             else -> null
