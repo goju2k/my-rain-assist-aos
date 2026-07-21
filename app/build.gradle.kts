@@ -83,6 +83,10 @@ androidComponents {
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
+    // Forces a modern Fragment past the old 1.1.0 that activity-compose pulls in transitively —
+    // lint's InvalidFragmentVersionForActivityResult otherwise fails release builds outright,
+    // since registerForActivityResult() needs Fragment >= 1.3.0 to call super.onRequestPermissionsResult().
+    implementation(libs.androidx.fragment)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
