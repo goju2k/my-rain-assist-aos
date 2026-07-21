@@ -1,7 +1,6 @@
 package com.goju.ribs.myrainassist.geo
 
 import com.goju.ribs.myrainassist.data.LatLon
-import kotlin.math.abs
 
 /** Fractional position within the radar grid quad. u: 0=west edge, 1=east edge. v: 0=north edge, 1=south edge. */
 data class UV(val u: Double, val v: Double)
@@ -10,59 +9,50 @@ data class UV(val u: Double, val v: Double)
  * Maps between lat/lon and the radar grid's fractional (u,v) space.
  *
  * `corners` is the 4-point quad returned by the radar-frames API, ordered
- * [southWest, northWest, northEast, southEast] (index 0..3), which we infer from the observed
- * sample coordinates. This ordering is an inference — verify empirically against the web map
- * before trusting real notifications (see project plan for the verification procedure).
+ * [southWest, northWest, northEast, southEast] (index 0..3). In raw lat/lon terms these look like
+ * a tilted quad (e.g. the NW and NE corners don't share a latitude) — but that's an artifact of
+ * projection, not a real tilt: the underlying grid is a plain axis-aligned square in KMA's own
+ * Lambert Conformal Conic projection (`+proj=lcc +lat_1=30 +lat_2=60 +lat_0=0 +lon_0=126
+ * +datum=WGS84`, confirmed against weather.go.kr's own map config and by reprojecting `corners`
+ * into that CRS — the 4 points line up into a rectangle there to within ~0.03% of its size, i.e.
+ * rounding noise). So rather than bilinearly warping lat/lon across 4 corners (an approximation,
+ * exact only at the corners themselves), this reprojects into LCC meters, fits the axis-aligned
+ * box from all 4 corners, and does plain linear interpolation there before unprojecting back —
+ * exact everywhere, not just at the corners.
  */
 class QuadMapper(corners: List<LatLon>) {
 
-    // u=0,v=0 -> north-west ; u=1,v=0 -> north-east ; u=0,v=1 -> south-west ; u=1,v=1 -> south-east
-    private val p00 = corners[1]
-    private val p10 = corners[2]
-    private val p01 = corners[0]
-    private val p11 = corners[3]
+    private val lcc = LambertConformalConic()
+    private val xMin: Double
+    private val xMax: Double
+    private val yMin: Double
+    private val yMax: Double
 
-    fun forwardMap(u: Double, v: Double): LatLon {
-        val w00 = (1 - u) * (1 - v)
-        val w10 = u * (1 - v)
-        val w01 = (1 - u) * v
-        val w11 = u * v
-        val lat = w00 * p00.lat + w10 * p10.lat + w01 * p01.lat + w11 * p11.lat
-        val lon = w00 * p00.lon + w10 * p10.lon + w01 * p01.lon + w11 * p11.lon
-        return LatLon(lat, lon)
+    init {
+        val sw = lcc.project(corners[0])
+        val nw = lcc.project(corners[1])
+        val ne = lcc.project(corners[2])
+        val se = lcc.project(corners[3])
+        // Opposite edges agree to within ~0.03% of the box size (see class doc) — averaging them
+        // fits the best axis-aligned box rather than favoring one pair of corners over the other.
+        xMin = (sw.x + nw.x) / 2
+        xMax = (ne.x + se.x) / 2
+        yMin = (sw.y + se.y) / 2
+        yMax = (nw.y + ne.y) / 2
     }
 
-    /** Inverse of [forwardMap] via Newton's method. Returns null if it fails to converge inside the quad. */
-    fun inverseMap(target: LatLon, maxIter: Int = 8, eps: Double = 1e-7): UV? {
-        var u = 0.5
-        var v = 0.5
-        repeat(maxIter) {
-            val p = forwardMap(u, v)
-            val rLat = p.lat - target.lat
-            val rLon = p.lon - target.lon
-            if (abs(rLat) < eps && abs(rLon) < eps) {
-                return clampIfClose(u, v)
-            }
+    fun forwardMap(u: Double, v: Double): LatLon {
+        val x = xMin + u * (xMax - xMin)
+        val y = yMax - v * (yMax - yMin)
+        return lcc.unproject(LambertConformalConic.Meters(x, y))
+    }
 
-            val dLatDu = -(1 - v) * p00.lat + (1 - v) * p10.lat - v * p01.lat + v * p11.lat
-            val dLonDu = -(1 - v) * p00.lon + (1 - v) * p10.lon - v * p01.lon + v * p11.lon
-            val dLatDv = -(1 - u) * p00.lat - u * p10.lat + (1 - u) * p01.lat + u * p11.lat
-            val dLonDv = -(1 - u) * p00.lon - u * p10.lon + (1 - u) * p01.lon + u * p11.lon
-
-            val det = dLatDu * dLonDv - dLatDv * dLonDu
-            if (abs(det) < 1e-12) return null
-
-            val du = (-rLat * dLonDv + rLon * dLatDv) / det
-            val dv = (-dLatDu * rLon + dLonDu * rLat) / det
-            u += du
-            v += dv
-        }
-        val p = forwardMap(u, v)
-        return if (abs(p.lat - target.lat) < eps * 10 && abs(p.lon - target.lon) < eps * 10) {
-            clampIfClose(u, v)
-        } else {
-            null
-        }
+    /** Exact closed-form inverse (no iterative solver needed): project to LCC meters, then a plain linear box lookup. */
+    fun inverseMap(target: LatLon): UV? {
+        val p = lcc.project(target)
+        val u = (p.x - xMin) / (xMax - xMin)
+        val v = (yMax - p.y) / (yMax - yMin)
+        return clampIfClose(u, v)
     }
 
     private fun clampIfClose(u: Double, v: Double): UV? {
