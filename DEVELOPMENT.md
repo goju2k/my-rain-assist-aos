@@ -138,7 +138,10 @@ GET https://d8dfs01bak16j.cloudfront.net/rain-assist/current.json
   "rainThresholdIndex": 22,  // 안드로이드 앱에서는 미사용
   "frames": [
     { "tm": "202607041000", "pngBase64": "..." },
-    ...  // tm 오름차순(오래된 것 → 최신), tm은 UTC
+    ...  // tm 오름차순(오래된 것 → 최신), tm은 KST(한국 표준시) — "UTC"로 잘못 문서화돼 있었고
+         // 실제로 `RadarFrame.epochMinute`도 UTC로 파싱해 lagMinutes가 항상 음수→0으로 clamp되던
+         // 버그가 있었다(2026-07-22 발견/수정). 실기기에서 받은 프레임의 tm을 실제 시각과 대조해
+         // 검증함: UTC로 해석하면 "최신" 프레임이 미래 시각이 되어버려 모순이었다.
   ]
 }
 ```

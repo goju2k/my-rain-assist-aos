@@ -11,6 +11,7 @@ import com.goju.ribs.myrainassist.analysis.ForecastEngine
 import com.goju.ribs.myrainassist.analysis.NotificationDedup
 import com.goju.ribs.myrainassist.data.RadarApi
 import com.goju.ribs.myrainassist.location.LocationFixProvider
+import com.goju.ribs.myrainassist.notification.LastCycleDebug
 import com.goju.ribs.myrainassist.notification.NotificationHelper
 import com.goju.ribs.myrainassist.notification.RainEventLog
 import kotlinx.coroutines.CoroutineScope
@@ -125,8 +126,12 @@ class RainMonitorService : Service() {
             RainEventLog.append(this, "SKIP_FORECAST", "위치가 레이더 범위를 벗어나 건너뛰었어요", debug)
             return
         }
-        Log.d(TAG, "runCycle: state=${result.state} etaMinutes=${result.etaMinutes} nearestRainDistanceKm=${result.nearestRainDistanceKm}")
+        Log.d(TAG, "runCycle: state=${result.state} etaMinutes=${result.etaMinutes} nearestRainDistanceKm=${result.nearestRainDistanceKm} latestFrameTm=${result.latestFrameTm} lagMinutes=${result.lagMinutes}")
         RainForecastBus.publish(result)
+        // Recorded every cycle regardless of whether anything notification-worthy happened —
+        // RainEventLog only captures state changes, so a long "still nothing nearby" stretch would
+        // otherwise leave no way to tell which radar frame the last executed cycle actually saw.
+        LastCycleDebug.save(this, result)
 
         val signal = NotificationDedup.Signal(result.etaMinutes, result.intensityMmh)
         val action = notificationDedup.evaluate(signal)

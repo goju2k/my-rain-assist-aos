@@ -35,6 +35,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.goju.ribs.myrainassist.notification.LastCycleDebug
 import com.goju.ribs.myrainassist.notification.RainEventLog
 import com.goju.ribs.myrainassist.service.NotificationEventBus
 import com.goju.ribs.myrainassist.service.RainForecastBus
@@ -105,6 +106,7 @@ class MainActivity : ComponentActivity() {
                                 Surface(modifier = Modifier.fillMaxSize()) {
                                     RainEventLogScreen(
                                         entries = remember(showEventLog, eventLogRefreshKey) { RainEventLog.readAll(this@MainActivity) },
+                                        lastCycle = remember(showEventLog, eventLogRefreshKey) { LastCycleDebug.read(this@MainActivity) },
                                         onBack = { showEventLog = false },
                                         onClear = {
                                             RainEventLog.clear(this@MainActivity)
