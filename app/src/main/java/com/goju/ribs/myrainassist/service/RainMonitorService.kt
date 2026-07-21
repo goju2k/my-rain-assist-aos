@@ -128,7 +128,7 @@ class RainMonitorService : Service() {
         Log.d(TAG, "runCycle: state=${result.state} etaMinutes=${result.etaMinutes} nearestRainDistanceKm=${result.nearestRainDistanceKm}")
         RainForecastBus.publish(result)
 
-        val signal = NotificationDedup.Signal(result.etaMinutes, result.nearestRainDistanceKm, result.intensityMmh)
+        val signal = NotificationDedup.Signal(result.etaMinutes, result.intensityMmh)
         val action = notificationDedup.evaluate(signal)
         if (action != NotificationDedup.Action.None) {
             val frameDebug = dedupBefore

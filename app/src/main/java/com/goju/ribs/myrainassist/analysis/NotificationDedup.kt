@@ -9,13 +9,13 @@ import kotlin.math.abs
 /**
  * Persisted state machine for rain-arrival notifications. Once an "incoming" or "active rain"
  * alert has fired, it suppresses further alerts for the same episode (no repeat spam while it
- * keeps raining) until the rain blob has moved away from the user by [STOP_DISTANCE_KM] for
- * [STOP_CONFIRM_CYCLES] consecutive cycles, at which point it either fires a "rain stopped" alert
- * (rain was actually overhead) or silently resets to idle (a forecast never arrived — telling the
- * user "it passed without raining" isn't actionable enough to interrupt them for) so the next
- * approaching cloud can trigger a fresh cycle. While rain stays active, a fresh alert also fires if
- * the intensity crosses a 약한/보통/강한/매우 강한 tier boundary, so "지금 비가 오고 있어요" doesn't
- * go stale while a shower is still overhead but getting noticeably heavier or lighter.
+ * keeps raining) until the very next cycle where the forecast no longer shows active/incoming
+ * rain, at which point it either fires a "rain stopped" alert (rain was actually overhead) or
+ * silently resets to idle (a forecast never arrived — telling the user "it passed without
+ * raining" isn't actionable enough to interrupt them for) so the next approaching cloud can
+ * trigger a fresh cycle. While rain stays active, a fresh alert also fires if the intensity
+ * crosses a 약한/보통/강한/매우 강한 tier boundary, so "지금 비가 오고 있어요" doesn't go stale
+ * while a shower is still overhead but getting noticeably heavier or lighter.
  */
 class NotificationDedup(context: Context) {
 
@@ -30,12 +30,11 @@ class NotificationDedup(context: Context) {
         data object None : Action()
     }
 
-    data class Signal(val etaMinutesRounded: Int?, val nearestRainDistanceKm: Double?, val intensityMmh: Double?)
+    data class Signal(val etaMinutesRounded: Int?, val intensityMmh: Double?)
 
     /** Snapshot of the persisted state machine, for attaching to debug/event logs. */
     fun debugSnapshot(): JSONObject = JSONObject()
         .put("watching", prefs.getBoolean(KEY_WATCHING, false))
-        .put("stoppedStreak", prefs.getInt(KEY_STOPPED_STREAK, 0))
         .put("activeRainNotified", prefs.getBoolean(KEY_ACTIVE_RAIN_NOTIFIED, false))
         .put("lastEtaBucket", if (prefs.contains(KEY_LAST_ETA_BUCKET)) prefs.getInt(KEY_LAST_ETA_BUCKET, -1) else JSONObject.NULL)
         .put("lastIntensityTier", if (prefs.contains(KEY_LAST_INTENSITY_TIER)) prefs.getInt(KEY_LAST_INTENSITY_TIER, -1) else JSONObject.NULL)
@@ -50,7 +49,7 @@ class NotificationDedup(context: Context) {
     private fun evaluateIdle(signal: Signal): Action {
         val eta = signal.etaMinutesRounded ?: return Action.None
 
-        val editor = prefs.edit().putBoolean(KEY_WATCHING, true).putInt(KEY_STOPPED_STREAK, 0)
+        val editor = prefs.edit().putBoolean(KEY_WATCHING, true)
         return if (eta <= 0) {
             editor.putBoolean(KEY_ACTIVE_RAIN_NOTIFIED, true)
                 .putInt(KEY_LAST_INTENSITY_TIER, RadarLegend.intensityTier(signal.intensityMmh))
@@ -63,21 +62,16 @@ class NotificationDedup(context: Context) {
     }
 
     private fun evaluateWatching(signal: Signal): Action {
-        val hasNearbyRain = signal.etaMinutesRounded != null ||
-            (signal.nearestRainDistanceKm != null && signal.nearestRainDistanceKm < STOP_DISTANCE_KM)
+        // Trusts this cycle's forecast at face value — the moment the radar no longer shows
+        // active/incoming rain for the user's spot, treat the episode as over immediately rather
+        // than waiting out a distance buffer or multiple confirming cycles.
+        val hasNearbyRain = signal.etaMinutesRounded != null
 
         if (!hasNearbyRain) {
-            val streak = prefs.getInt(KEY_STOPPED_STREAK, 0) + 1
-            Log.d(TAG, "evaluateWatching: no nearby rain, streak=$streak/$STOP_CONFIRM_CYCLES")
-            if (streak >= STOP_CONFIRM_CYCLES) {
-                val wasActive = prefs.getBoolean(KEY_ACTIVE_RAIN_NOTIFIED, false)
-                prefs.edit().clear().apply()
-                return if (wasActive) Action.NotifyRainStopped else Action.ResetToIdle
-            }
-            prefs.edit().putInt(KEY_STOPPED_STREAK, streak).apply()
-            return Action.None
+            val wasActive = prefs.getBoolean(KEY_ACTIVE_RAIN_NOTIFIED, false)
+            prefs.edit().clear().apply()
+            return if (wasActive) Action.NotifyRainStopped else Action.ResetToIdle
         }
-        prefs.edit().putInt(KEY_STOPPED_STREAK, 0).apply()
 
         val activeRainNotified = prefs.getBoolean(KEY_ACTIVE_RAIN_NOTIFIED, false)
         val eta = signal.etaMinutesRounded
@@ -111,12 +105,9 @@ class NotificationDedup(context: Context) {
         const val TAG = "NotificationDedup"
         const val PREFS_NAME = "rain_notification_state"
         const val KEY_WATCHING = "watching"
-        const val KEY_STOPPED_STREAK = "stopped_streak"
         const val KEY_LAST_ETA_BUCKET = "last_eta_bucket"
         const val KEY_ACTIVE_RAIN_NOTIFIED = "active_rain_notified"
         const val KEY_LAST_INTENSITY_TIER = "last_intensity_tier"
-        const val STOP_DISTANCE_KM = 5.0
-        const val STOP_CONFIRM_CYCLES = 2
         const val MATERIAL_CHANGE_MINUTES = 20
     }
 }
