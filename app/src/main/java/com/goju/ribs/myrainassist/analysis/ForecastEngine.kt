@@ -152,8 +152,11 @@ object ForecastEngine {
         // from the no-rain background. Drawing a path/dot for those reads as "nothing here" to the
         // eye even though the cell is technically present, so only forward blobs that would
         // actually look like rain on the map. arrivalMinutes/state/intensity above already used
-        // the unfiltered blobForecasts, so this filter only affects what's drawn.
-        val visibleBlobForecasts = blobForecasts.filter { it.peakMmh >= WEAK_RAIN_MAX_MMH }
+        // the unfiltered blobForecasts, so this filter only affects what's drawn. A blob with a
+        // non-null arrivalMinutes is kept regardless of intensity — it's the blob driving
+        // state/etaMinutes, so dropping it here would let the web report "rain incoming" while
+        // shipping zero blobs marked as the forecast target to actually highlight.
+        val visibleBlobForecasts = blobForecasts.filter { it.peakMmh >= WEAK_RAIN_MAX_MMH || it.arrivalMinutes != null }
 
         return RainForecastResult(
             generatedAtEpochMs = nowEpochMs,

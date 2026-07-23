@@ -80,6 +80,8 @@ data class RainForecastResult(
         put("headingDeg", headingDeg)
         put("speedKmh", speedKmh)
         put("peakMmh", peakMmh)
+        put("arrivalMinutes", arrivalMinutes ?: JSONObject.NULL)
+        put("isForecastTarget", arrivalMinutes != null)
         put("path", JSONArray().apply {
             path.forEach { point ->
                 put(JSONObject().apply {

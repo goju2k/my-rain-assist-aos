@@ -49,15 +49,18 @@ window.RainAssistBridge = {
 
 강수 예보의 기하/상태 데이터. 백그라운드 폴링 주기(~5.5분)마다, **페이지 로드 완료 직후(이미 계산된 값이 있으면)**, 그리고 **앱이 포그라운드로 돌아올 때 마지막 값을 즉시 재전송**합니다. 텍스트 문구는 포함하지 않습니다 — 지도 위 강수 경로(특히 `blobs`) 렌더링용입니다. 내 위치에 비 예보가 없어도(`state: "NONE"`) `blobs`는 채워질 수 있으니, 주변 강수 셀 경로 표시에는 `forecast.state`가 아니라 `blobs` 존재 여부를 보세요.
 
-> `blobs`에는 "약한 비" 등급(peakMmh < 3.0mm/h) 미만인 셀은 포함되지 않습니다. 레이더 격자 전체에서
-> 잡히는 강수 셀 대다수가 이 등급이라(배경색과 거의 구분 안 되는 옅은 하늘색), 전부 점/경로로
-> 그리면 실제 눈에 보이는 구름 없이 점만 찍힌 것처럼 보이는 문제가 있었습니다. `forecast.state`나
-> `intensityMmh` 계산에는 이 등급도 그대로 포함되므로(알림/ETA 로직은 영향 없음), 화면에 그려지는
-> `blobs` 개수만 줄어든 것입니다.
+> `blobs`에는 "약한 비" 등급(peakMmh < 3.0mm/h) 미만인 셀은 포함되지 않습니다. 단, `isForecastTarget`이
+> `true`인 블롭(아래 참고)은 약해도 항상 포함됩니다 — 이 블롭이 `forecast.state`/`etaMinutes`를
+> 만든 장본인이라, 강도만 보고 걸러내면 "비 옴" 상태만 오고 강조해서 그릴 blob은 하나도 없는
+> 상황이 생기기 때문입니다. 그 외 나머지는, 레이더 격자 전체에서 잡히는 강수 셀 대다수가 이
+> 등급이라(배경색과 거의 구분 안 되는 옅은 하늘색), 전부 점/경로로 그리면 실제 눈에 보이는 구름
+> 없이 점만 찍힌 것처럼 보이는 문제가 있어 걸러냅니다. `forecast.state`나 `intensityMmh` 계산에는
+> 이 등급도 그대로 포함되므로(알림/ETA 로직은 영향 없음), 화면에 그려지는 `blobs` 개수만 줄어든
+> 것입니다.
 
 > ⚠️ **알려진 레이스**: 페이지 로드 직후 `applyForecast`와 `showNotification`이 같은 tick에 연달아 호출되면(둘 다 hydration이 안 끝난 시점) `showNotification`의 문구가 사라지는 현상이 관찰됐습니다. 페이지가 이미 안정된 상태에서 각각 단독으로 호출하면 재현되지 않습니다 — 초기 렌더링 시점의 상태 업데이트 경쟁(race)으로 보입니다. 네이티브 쪽에서 두 호출 사이에 300ms 지연을 넣어 우회했지만, 근본 원인은 웹 쪽 초기 hydration 로직에 있을 가능성이 높습니다.
 
-> 기존 `requestDrawRainPathVector(json)` 전역 함수 호출을 대체합니다. 페이로드 스키마는 100% 동일하고 `intensityMmh`/`peakMmh` 필드만 추가됐습니다 — `requestDrawRainPathVector`를 이미 구현했다면 함수를 `window.RainAssistBridge.applyForecast`로 옮기기만 하면 됩니다.
+> 기존 `requestDrawRainPathVector(json)` 전역 함수 호출을 대체합니다. 페이로드 스키마는 100% 동일하고 `intensityMmh`/`peakMmh`/`arrivalMinutes`/`isForecastTarget` 필드만 추가됐습니다 — `requestDrawRainPathVector`를 이미 구현했다면 함수를 `window.RainAssistBridge.applyForecast`로 옮기기만 하면 됩니다.
 
 ```jsonc
 {
@@ -79,6 +82,8 @@ window.RainAssistBridge = {
       "headingDeg": 135.2,      // 0=북, 시계방향
       "speedKmh": 18.4,
       "peakMmh": 15.0,          // 이 강수 셀 내 최대 강도(mm/h)
+      "arrivalMinutes": 20,     // 신규. 이 blob 단독 기준 도달까지 남은 분. null이면 이 blob은 내 위치에 도달 안 함
+      "isForecastTarget": true, // 신규. arrivalMinutes != null 의 편의 필드 — true인 blob의 path만 다른 색/굵기로 강조해서 "어느 경로가 나에게 오고 있는지" 표시 권장
       "path": [
         { "minutesFromNow": -22, "lat": 37.655, "lon": 127.24 },
         { "minutesFromNow": -10, "lat": 37.64, "lon": 127.22 },
@@ -108,6 +113,14 @@ window.RainAssistBridge = {
 레이더 원본 프레임(`radarFrameEpochMs` 시점)은 실시간이 아니라 최대 60분까지 뒤처질 수 있습니다(`DEVELOPMENT.md` 4.5절 lag 보정 참고). `centroid`(= `path`에서 `minutesFromNow: 0`인 점)는 이 지연을 보정해 "지금 이 순간"으로 앞당겨 외삽한 위치라서, 실제 레이더 프레임에서 관측된 위치(`observedCentroid`)보다 이동 방향으로 더 나아가 있습니다.
 
 레이더 이미지 자체는 여전히 `radarFrameEpochMs` 시점 기준으로 그려지므로, `centroid`를 기준으로 그리면 화면에 보이는 구름 덩어리보다 진행 방향 쪽으로 앞서 있어 어긋나 보일 수 있습니다. 레이더 이미지와의 정합이 중요한 렌더링(예: 이미지 위에 딱 겹쳐 그리는 마커)에는 `observedCentroid`를 쓰고, 도착 예보(ETA)·사용자 위치와의 비교·`path` 자체는 기존처럼 `centroid` 기준을 그대로 쓰면 됩니다.
+
+#### 3.1.3 `isForecastTarget` / `arrivalMinutes` — 어느 blob이 "나에게 오고 있는" 경로인지
+
+`blobs` 배열에는 내 위치와 무관하게 그냥 근처에 떠 있는 비구름도 함께 담깁니다. 그중 실제로 내 위치까지 도달할 것으로 계산된(직선 외삽 경로가 `path`의 미래 구간 어느 시점에 내 위치 반경 안으로 들어오는) blob만 `arrivalMinutes`가 `null`이 아니고, `isForecastTarget`도 `true`입니다. `isForecastTarget: true`인 blob의 `path`만 다른 색/굵기로 그리면 "여러 비구름 중 실제로 나를 향해 오는 경로가 어느 것인지"를 지도에서 구분해 보여줄 수 있습니다.
+
+- `arrivalMinutes`는 `forecast.etaMinutes`(전체 blob 중 가장 빨리 도달하는 값)와 다른, **이 blob 단독** 기준 도달 시간입니다. `isForecastTarget`인 blob이 여러 개면 각자 다른 `arrivalMinutes`를 가질 수 있습니다.
+- `isForecastTarget: true`인 blob은 `peakMmh < 3.0mm/h`("약한 비")여도 항상 `blobs`에 포함됩니다(위 3.1 참고) — 이 blob이 상태를 만든 근거이므로 약하다고 걸러내지 않습니다.
+- `forecast.state`가 `"NONE"`이어도(아무 blob도 도달 예정이 아니어도) `blobs`에 다른 blob들이 있을 수 있으며, 이때는 모든 blob의 `isForecastTarget`이 `false`입니다.
 
 ### 3.2 `showNotification(notification)`
 
