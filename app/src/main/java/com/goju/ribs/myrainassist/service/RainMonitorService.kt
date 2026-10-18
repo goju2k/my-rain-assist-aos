@@ -238,9 +238,12 @@ class RainMonitorService : Service() {
                 }
                 NotificationDedup.Action.ResetToIdle -> {
                     // A forecast never actually arrived — not useful enough to interrupt the user
-                    // with an alert, so just log it for debugging and quietly reset to idle.
+                    // with an OS alert, so just log it for debugging. The WebView still needs to
+                    // hear about this, though: it only ever reflects the last showNotification it
+                    // was given, so without a push here it would keep showing the stale INCOMING
+                    // message indefinitely even though the app itself has already moved on.
                     RainEventLog.append(this, "MISSED", "비가 오지 않고 지나갔어요 (알림 없이 초기화)", frameDebug)
-                    null
+                    "IDLE" to NotificationHelper.DEFAULT_ONGOING_TEXT
                 }
                 NotificationDedup.Action.None -> null
             }
@@ -253,6 +256,13 @@ class RainMonitorService : Service() {
                 )
             }
             log.put("notify", action.javaClass.simpleName)
+        }
+
+        // "비가 그쳤어요" is news for a while, then just stale: the ongoing notification already
+        // went back to the idle text on the next cycle, so move the WebView badge back too.
+        val shown = NotificationEventBus.events.value
+        if (action == NotificationDedup.Action.None && shown != null && shown.isStaleStop(System.currentTimeMillis())) {
+            NotificationEventBus.publish(NotificationEvent.idle(System.currentTimeMillis()))
         }
 
         // Refresh the ongoing notification text right away so it tracks the phase that was just

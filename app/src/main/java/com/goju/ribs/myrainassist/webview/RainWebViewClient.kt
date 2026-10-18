@@ -6,7 +6,6 @@ import android.graphics.Bitmap
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import com.goju.ribs.myrainassist.notification.NotificationHelper
 import com.goju.ribs.myrainassist.notification.RainEventLog
 import com.goju.ribs.myrainassist.service.NotificationEvent
 import com.goju.ribs.myrainassist.service.NotificationEventBus
@@ -46,15 +45,10 @@ class RainWebViewClient(private val context: Context) : WebViewClient() {
         // computed forecast (blob paths etc.) sitting in the bus from before this page load
         // existed. Push it immediately rather than waiting up to ~5.5 minutes for the next poll.
         RainForecastBus.forecast.value?.let { WebBridge.pushForecastToWebView(view, it) }
-        val event = NotificationEventBus.events.value
-            ?: RainEventLog.lastNotifiedEvent(context)
-            ?: NotificationEvent(
-                state = "IDLE",
-                message = NotificationHelper.DEFAULT_ONGOING_TEXT,
-                etaMinutes = null,
-                intensityMmh = null,
-                timestampEpochMs = System.currentTimeMillis(),
-            )
+        val now = System.currentTimeMillis()
+        val event = (NotificationEventBus.events.value ?: RainEventLog.lastNotifiedEvent(context))
+            ?.takeUnless { it.isStaleStop(now) }
+            ?: NotificationEvent.idle(now)
         // Firing this in the same tick as the applyForecast call above, right at cold load, has
         // been observed to lose the notification text — the page is still mid-hydration at
         // onPageFinished, and the two pushes appear to race there (calling either one alone, or

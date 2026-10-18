@@ -42,7 +42,10 @@ object RainEventLog {
         File(context.filesDir, FILE_NAME).delete()
     }
 
-    private val WEBVIEW_NOTIFIABLE_STATES = setOf("INCOMING", "ACTIVE", "STOPPED")
+    // MISSED (an INCOMING forecast that fizzled — see RainMonitorService's ResetToIdle handling)
+    // is included so a cold load after one of these doesn't resurrect the stale INCOMING/ACTIVE
+    // entry that precedes it in the log; it's reconstructed below as a plain IDLE event instead.
+    private val WEBVIEW_NOTIFIABLE_STATES = setOf("INCOMING", "ACTIVE", "STOPPED", "MISSED")
 
     /**
      * Reconstructs the last real notification from disk, for a fresh WebView load in a process
@@ -54,6 +57,11 @@ object RainEventLog {
     @Synchronized
     fun lastNotifiedEvent(context: Context): NotificationEvent? {
         val entry = readAll(context).firstOrNull { it.state in WEBVIEW_NOTIFIABLE_STATES } ?: return null
+        if (entry.state == "MISSED") {
+            // The stored message includes a debug-only parenthetical ("알림 없이 초기화") never
+            // meant for display — reconstruct the same IDLE event the live path would have pushed.
+            return NotificationEvent.idle(entry.timestampEpochMs)
+        }
         val debug = entry.debug
         return NotificationEvent(
             state = entry.state,
