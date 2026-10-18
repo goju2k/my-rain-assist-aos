@@ -63,12 +63,24 @@ class MotionEstimatorTest {
 
     @Test
     fun `large blob is tracked through the coarse-to-fine path`() {
-        // Big enough that the exhaustive search budget is exceeded, moving 9 cells south-east.
+        // Big enough that the exhaustive search budget is exceeded, moving 8 east / 6 south
+        // (10 cells ≈ 7 km in 5 min ≈ 85 km/h, inside the 100 km/h cap).
         val latest = grid(intArrayOf(60, 60, 60, 70))
-        val motion = estimate(latest, grid(intArrayOf(51, 51, 60, 70)) to 5L).single()
+        val motion = estimate(latest, grid(intArrayOf(54, 52, 60, 70)) to 5L).single()
 
-        assertEquals(9.0 / 5.0, motion.vxCellsPerMin, 1e-9)
-        assertEquals(9.0 / 5.0, motion.vyCellsPerMin, 1e-9)
+        assertEquals(8.0 / 5.0, motion.vxCellsPerMin, 1e-9)
+        assertEquals(6.0 / 5.0, motion.vyCellsPerMin, 1e-9)
+    }
+
+    @Test
+    fun `motion faster than the speed cap is not reported`() {
+        // 9 east / 9 south in 5 min ≈ 107 km/h — over MAX_SPEED_KMH even though each axis alone is
+        // within it; the old square search window accepted this.
+        val latest = grid(intArrayOf(60, 60, 30, 30))
+        val motion = estimate(latest, grid(intArrayOf(51, 51, 30, 30)) to 5L).single()
+
+        val speedKmh = Math.hypot(motion.vxCellsPerMin, motion.vyCellsPerMin) * kmPerCell * 60
+        assertTrue("speed $speedKmh", speedKmh <= MotionEstimator.MAX_SPEED_KMH)
     }
 
     @Test

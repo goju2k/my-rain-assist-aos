@@ -209,10 +209,12 @@ object ForecastEngine {
             (1..MAX_FORECAST_MINUTES).firstOrNull { t -> motions.none { coverAt(it, t) != null } }
         }
 
-        // The rain parcel that will reach the user first: where it sits in the latest frame.
+        // The rain parcel that will reach the user first: where it sits in the latest frame. The
+        // exact traced-back point (not the matched cell, which may be a cell off within
+        // COVER_RADIUS_CELLS) so its drawn arrow runs straight through the user's position.
         val targetMotion = arriving.entries.minByOrNull { it.value!! }?.key
         val targetParcel = targetMotion?.let { m ->
-            Triple(m, sourceRow(m, minArrival!!).roundToInt(), sourceCol(m, minArrival).roundToInt())
+            Triple(m, sourceRow(m, minArrival!!), sourceCol(m, minArrival))
         }
         val displayBlobs = displayBlobs(
             scene = scene,
@@ -292,7 +294,7 @@ object ForecastEngine {
         arrivals: Map<MotionEstimator.BlobMotion, Int?>,
         lagMinutes: Int,
         coreArrival: (coreLabels: IntArray, coreId: Int, motion: MotionEstimator.BlobMotion) -> Int?,
-        targetParcel: Triple<MotionEstimator.BlobMotion, Int, Int>?,
+        targetParcel: Triple<MotionEstimator.BlobMotion, Double, Double>?,
         targetMmh: Double?,
     ): List<BlobForecast> {
         val motionByBlobId = motions.associateBy { it.blob.id }
@@ -312,7 +314,7 @@ object ForecastEngine {
         // edge): one highlighted arrow from exactly the parcel of rain that will arrive.
         val parcel = if (fromCores.none { it.arrivalMinutes != null } && targetParcel != null) {
             val (motion, row, col) = targetParcel
-            listOf(buildBlobForecast("target", row.toDouble(), col.toDouble(), targetMmh ?: motion.blob.peakMmh, motion, scene, lagMinutes, arrivals[motion]))
+            listOf(buildBlobForecast("target", row, col, targetMmh ?: motion.blob.peakMmh, motion, scene, lagMinutes, arrivals[motion]))
         } else {
             emptyList()
         }

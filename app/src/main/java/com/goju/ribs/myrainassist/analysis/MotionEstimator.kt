@@ -227,7 +227,7 @@ object MotionEstimator {
         return if (best.similarity < MIN_SIMILARITY) null else best
     }
 
-    /** SAD search over shifts within [radius] of (centerDx,centerDy), clamped to ±[maxShift]; ties go to the smaller shift. */
+    /** SAD search over shifts within [radius] of (centerDx,centerDy), no longer than [maxShift]; ties go to the smaller shift. */
     private fun search(box: Box, older: LevelGrid, originRow: Int, originCol: Int, centerDx: Int, centerDy: Int, radius: Int, maxShift: Int): Match {
         var bestSad = Long.MAX_VALUE
         var bestDist = Int.MAX_VALUE
@@ -236,6 +236,8 @@ object MotionEstimator {
         var bestOlderSum = 0L
         for (dy in (centerDy - radius).coerceAtLeast(-maxShift)..(centerDy + radius).coerceAtMost(maxShift)) {
             for (dx in (centerDx - radius).coerceAtLeast(-maxShift)..(centerDx + radius).coerceAtMost(maxShift)) {
+                // A speed cap, not a per-axis one: the square window alone allowed ~141 km/h diagonally.
+                if (dx * dx + dy * dy > maxShift * maxShift) continue
                 var sad = 0L
                 var olderSum = 0L
                 var aborted = false
