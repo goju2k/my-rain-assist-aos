@@ -74,7 +74,7 @@ android {
     testOptions {
         unitTests.all { test ->
             test.maxHeapSize = "2g"
-            listOf("backtest.from", "backtest.to", "backtest.lagMinutes", "backtest.probe").forEach { key ->
+            listOf("backtest.from", "backtest.to", "backtest.lagMinutes", "backtest.probe", "backtest.dumpAt").forEach { key ->
                 project.findProperty(key)?.let { test.systemProperty(key, it.toString()) }
             }
             test.systemProperty("backtest.cacheDir", rootProject.file(".backtest-cache").path)
@@ -107,6 +107,8 @@ dependencies {
     implementation(libs.play.services.location)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
+    // Real org.json for JVM tests (android.jar only ships stubs) — the backtest dumps RainForecastResult.toJson().
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)

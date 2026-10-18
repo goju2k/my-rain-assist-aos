@@ -47,7 +47,7 @@ class ForecastBacktest {
         val reportDir = File(System.getProperty("backtest.reportDir")).apply { mkdirs() }
 
         val engines = BacktestEngines.all()
-        val mapper = QuadMapper(CORNERS)
+        val mapper = QuadMapper.KMA_COMPOSITE
         val tms = tmRange(from!!, to)
         val locationCells = LOCATIONS.map { loc ->
             mapper.inverseMap(loc)!!.let { uv -> intArrayOf((uv.v * (GRID - 1)).roundToInt(), (uv.u * (GRID - 1)).roundToInt()) }
@@ -116,6 +116,28 @@ class ForecastBacktest {
             lat += 0.15
         }
         File(File(System.getProperty("backtest.reportDir")).apply { mkdirs() }, "probe.txt").writeText(out.toString())
+    }
+
+    /**
+     * Writes the exact WebView payload (RainForecastResult.toJson) the app would push for a location
+     * right now — for checking the map drawing in a browser without the phone:
+     *   ./gradlew :app:testDebugUnitTest --tests '*ForecastBacktest.dumpForecast*' --rerun -Pbacktest.dumpAt=37.0,127.9
+     * Output: app/build/backtest/forecast.json
+     */
+    @Test
+    fun dumpForecast() {
+        val at = System.getProperty("backtest.dumpAt")
+        assumeTrue("dump not requested (-Pbacktest.dumpAt=lat,lon)", at != null)
+        val (lat, lon) = at!!.split(",").map { it.trim().toDouble() }
+        val source = KmaFrameSource(File(System.getProperty("backtest.cacheDir")))
+        var t = LocalDateTime.now().withSecond(0).withNano(0).let { it.withMinute(it.minute / 5 * 5) }
+        val frames = mutableListOf<RadarFrame>()
+        repeat(12) {
+            if (frames.size < FRAME_WINDOW) source.load(KmaFrameSource.TM_FORMAT.format(t))?.let { frames.add(0, it) }
+            t = t.minusMinutes(5)
+        }
+        val result = com.goju.ribs.myrainassist.analysis.ForecastEngine.computeForecast(RadarResponse(CORNERS, frames), LatLon(lat, lon), System.currentTimeMillis())!!
+        File(File(System.getProperty("backtest.reportDir")).apply { mkdirs() }, "forecast.json").writeText(result.toJson().toString(1))
     }
 
     private fun score(

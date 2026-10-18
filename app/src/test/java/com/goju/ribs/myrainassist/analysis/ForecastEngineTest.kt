@@ -20,7 +20,7 @@ class ForecastEngineTest {
     )
     private val size = 1453
     private val user = LatLon(37.621, 127.157)
-    private val userCell: Pair<Int, Int> = QuadMapper(corners).inverseMap(user)!!.let {
+    private val userCell: Pair<Int, Int> = QuadMapper.KMA_COMPOSITE.inverseMap(user)!!.let {
         (it.v * (size - 1)).roundToInt() to (it.u * (size - 1)).roundToInt()
     }
     private val tms = listOf("202610181800", "202610181805", "202610181810", "202610181815")

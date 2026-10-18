@@ -61,6 +61,11 @@ object ForecastEngine {
     private const val INTENSITY_LOOKAHEAD_MINUTES = 15
     private const val ETA_ROUNDING_MINUTES = 5
 
+    // Map arrows (see displayBlobs): cores of >= 1 mm/h, at least ~12 km², at most this many.
+    private const val DISPLAY_MAX_INDEX = 20
+    private const val DISPLAY_MIN_CELLS = 25
+    private const val MAX_DISPLAY_BLOBS = 15
+
     /** The analyzed window, in full-mosaic cell coordinates. */
     data class Roi(val row0: Int, val col0: Int, val width: Int, val height: Int)
 
@@ -80,8 +85,8 @@ object ForecastEngine {
      * The window [computeForecast] will analyze for [userLocation] — exactly what the app needs to
      * download (see RadarRepository). Null when the location is off the radar grid.
      */
-    fun roiFor(corners: List<LatLon>, userLocation: LatLon, fullWidth: Int, fullHeight: Int): Roi? =
-        place(QuadMapper(corners), userLocation, fullWidth, fullHeight)?.roi
+    fun roiFor(userLocation: LatLon, fullWidth: Int, fullHeight: Int): Roi? =
+        place(QuadMapper.KMA_COMPOSITE, userLocation, fullWidth, fullHeight)?.roi
 
     private class Scene(
         val mapper: QuadMapper,
@@ -96,16 +101,17 @@ object ForecastEngine {
 
         /**
          * Heaviest corroborated reading among [blobId]'s cells within [COVER_RADIUS_CELLS] of
-         * (row, col), or null if the blob doesn't cover that point.
+         * (row, col), or null if the blob doesn't cover that point. [labelMap] defaults to the
+         * forecast blobs; pass the display cores' map to ask about a core instead.
          */
-        fun coverMmh(blobId: Int, row: Double, col: Double): Double? {
+        fun coverMmh(blobId: Int, row: Double, col: Double, labelMap: IntArray = labels): Double? {
             val r = row.roundToInt()
             val c = col.roundToInt()
             var best: Double? = null
             for (dr in -COVER_RADIUS_CELLS..COVER_RADIUS_CELLS) for (dc in -COVER_RADIUS_CELLS..COVER_RADIUS_CELLS) {
                 val rr = r + dr
                 val cc = c + dc
-                if (!grid.inBounds(rr, cc) || labels[rr * grid.width + cc] != blobId) continue
+                if (!grid.inBounds(rr, cc) || labelMap[rr * grid.width + cc] != blobId) continue
                 val mmh = grid.corroboratedMmhAt(rr, cc)
                 if (best == null || mmh > best) best = mmh
             }
@@ -115,7 +121,8 @@ object ForecastEngine {
 
     fun computeForecast(response: RadarResponse, userLocation: LatLon, nowEpochMs: Long): RainForecastResult? {
         if (response.frames.size < 2) return null
-        val mapper = QuadMapper(response.corners)
+        // Always KMA's exact extent: the server's `corners` are a 2-5 km-off approximation of it.
+        val mapper = QuadMapper.KMA_COMPOSITE
         val latestFrame = response.frames.last()
         val fullWidth = latestFrame.fullWidth
         val fullHeight = latestFrame.fullHeight
@@ -202,20 +209,29 @@ object ForecastEngine {
             (1..MAX_FORECAST_MINUTES).firstOrNull { t -> motions.none { coverAt(it, t) != null } }
         }
 
-        val blobForecasts = motions.map { motion ->
-            buildBlobForecast(motion, scene, lagMinutes, arrivals[motion])
+        // The rain parcel that will reach the user first: where it sits in the latest frame.
+        val targetMotion = arriving.entries.minByOrNull { it.value!! }?.key
+        val targetParcel = targetMotion?.let { m ->
+            Triple(m, sourceRow(m, minArrival!!).roundToInt(), sourceCol(m, minArrival).roundToInt())
         }
-        // Most detected cells are "약한 비" (< 3mm/h), a shade of blue barely distinguishable from
-        // the no-rain background, so only forward blobs that would actually look like rain on the
-        // map — plus any blob driving the forecast, so the web always has the target to highlight.
-        val visibleBlobForecasts = blobForecasts.filter { it.peakMmh >= WEAK_RAIN_MAX_MMH || it.arrivalMinutes != null }
+        val displayBlobs = displayBlobs(
+            scene = scene,
+            motions = motions,
+            arrivals = arrivals,
+            lagMinutes = lagMinutes,
+            coreArrival = { coreLabels, coreId, m ->
+                (0..MAX_FORECAST_MINUTES).firstOrNull { t -> scene.coverMmh(coreId, sourceRow(m, t), sourceCol(m, t), coreLabels) != null }
+            },
+            targetParcel = targetParcel,
+            targetMmh = intensityMmh,
+        )
 
         return RainForecastResult(
             generatedAtEpochMs = nowEpochMs,
             userLocation = userLocation,
             state = state,
             etaMinutes = minArrival?.let { roundEta(it) },
-            blobs = visibleBlobForecasts,
+            blobs = displayBlobs,
             nearestRainDistanceKm = nearestKm.values.minOrNull(),
             intensityMmh = intensityMmh,
             latestFrameTm = latestFrame.tm,
@@ -262,11 +278,78 @@ object ForecastEngine {
         return PresenceGrid(roi.width, roi.height, out)
     }
 
-    private fun buildBlobForecast(motion: MotionEstimator.BlobMotion, scene: Scene, lagMinutes: Int, arrivalMinutes: Int?): BlobForecast {
+    /**
+     * What the map draws: one arrow per rain area a person would call "a cloud" — a connected
+     * core of >= 1 mm/h (green and up; the 0.1-0.5 mm/h tiers are pale blues barely different from
+     * the dry background) — starting at that core's visual center in the latest radar frame, and
+     * moving with the motion of the forecast blob it belongs to. Forecast blobs themselves are
+     * whole connected 0.1 mm/h areas that often span many such cores across tens of km, so their
+     * single anchor point rarely sits where the eye puts "the cloud".
+     */
+    private fun displayBlobs(
+        scene: Scene,
+        motions: List<MotionEstimator.BlobMotion>,
+        arrivals: Map<MotionEstimator.BlobMotion, Int?>,
+        lagMinutes: Int,
+        coreArrival: (coreLabels: IntArray, coreId: Int, motion: MotionEstimator.BlobMotion) -> Int?,
+        targetParcel: Triple<MotionEstimator.BlobMotion, Int, Int>?,
+        targetMmh: Double?,
+    ): List<BlobForecast> {
+        val motionByBlobId = motions.associateBy { it.blob.id }
+        val coreLabels = IntArray(scene.grid.width * scene.grid.height) { -1 }
+        val cores = ConnectedComponents.findBlobs(scene.grid, DISPLAY_MIN_CELLS, coreLabels, maxIndex = DISPLAY_MAX_INDEX)
+            .sortedByDescending { it.sizeCells }
+            .take(MAX_DISPLAY_BLOBS)
+        val fromCores = cores.mapNotNull { core ->
+            val (row, col) = visualCenter(core.cells, scene.grid)
+            val motion = motionByBlobId[scene.labels[row * scene.grid.width + col]] ?: return@mapNotNull null
+            // Highlighted only if this core itself reaches the user — not every core of a wide
+            // band that happens to be raining on them somewhere.
+            val arrival = if (arrivals[motion] != null) coreArrival(coreLabels, core.id, motion) else null
+            buildBlobForecast("core-${core.id}", row.toDouble(), col.toDouble(), core.peakMmh, motion, scene, lagMinutes, arrival)
+        }
+        // Rain reaching the user but no drawn core among it (usually a band's light leading
+        // edge): one highlighted arrow from exactly the parcel of rain that will arrive.
+        val parcel = if (fromCores.none { it.arrivalMinutes != null } && targetParcel != null) {
+            val (motion, row, col) = targetParcel
+            listOf(buildBlobForecast("target", row.toDouble(), col.toDouble(), targetMmh ?: motion.blob.peakMmh, motion, scene, lagMinutes, arrivals[motion]))
+        } else {
+            emptyList()
+        }
+        return fromCores + parcel
+    }
+
+    /** Intensity-weighted mean position, snapped to the nearest of [cells] so it's always inside the cloud (a curved band's mean can fall outside it). */
+    private fun visualCenter(cells: List<IntArray>, grid: PresenceGrid): Pair<Int, Int> {
+        var weightSum = 0.0
+        var rowAcc = 0.0
+        var colAcc = 0.0
+        for (cell in cells) {
+            val weight = LevelGrid.levelForIndex(grid.valueAt(cell[0], cell[1])).toDouble()
+            weightSum += weight
+            rowAcc += cell[0] * weight
+            colAcc += cell[1] * weight
+        }
+        val meanRow = rowAcc / weightSum
+        val meanCol = colAcc / weightSum
+        val nearest = cells.minBy { (it[0] - meanRow) * (it[0] - meanRow) + (it[1] - meanCol) * (it[1] - meanCol) }
+        return nearest[0] to nearest[1]
+    }
+
+    private fun buildBlobForecast(
+        id: String,
+        anchorRow: Double,
+        anchorCol: Double,
+        peakMmh: Double,
+        motion: MotionEstimator.BlobMotion,
+        scene: Scene,
+        lagMinutes: Int,
+        arrivalMinutes: Int?,
+    ): BlobForecast {
         val blob = motion.blob
-        val centroidAtTm = scene.latLonOf(blob.centroidRow, blob.centroidCol)
-        val kmPerCellX = haversineKm(centroidAtTm, scene.latLonOf(blob.centroidRow, blob.centroidCol + 1))
-        val kmPerCellY = haversineKm(centroidAtTm, scene.latLonOf(blob.centroidRow + 1, blob.centroidCol))
+        val centroidAtTm = scene.latLonOf(anchorRow, anchorCol)
+        val kmPerCellX = haversineKm(centroidAtTm, scene.latLonOf(anchorRow, anchorCol + 1))
+        val kmPerCellY = haversineKm(centroidAtTm, scene.latLonOf(anchorRow + 1, anchorCol))
 
         val eastKmPerMin = motion.vxCellsPerMin * kmPerCellX
         // row increases southward, so northward displacement is the negative of vy.
@@ -295,7 +378,7 @@ object ForecastEngine {
             .map { t -> PathPoint(t, positionAt(lagMinutes + t)) }
 
         return BlobForecast(
-            id = "blob-${blob.id}",
+            id = id,
             sizeCells = blob.sizeCells,
             centroid = positionAt(lagMinutes),
             // Position as actually observed in the latest radar frame (tm), before the lag
@@ -306,7 +389,7 @@ object ForecastEngine {
             speedKmh = speedKmh,
             path = pastPoints + PathPoint(0, positionAt(lagMinutes)) + futurePoints,
             arrivalMinutes = arrivalMinutes,
-            peakMmh = blob.peakMmh,
+            peakMmh = peakMmh,
         )
     }
 

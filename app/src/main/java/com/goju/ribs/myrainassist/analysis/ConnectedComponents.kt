@@ -24,15 +24,24 @@ object ConnectedComponents {
     /**
      * @param labels optional row-major output (size width*height, pre-filled by the caller, e.g.
      *   with -1): every cell of a kept blob gets that blob's [Blob.id]; other cells are untouched.
+     * @param maxIndex legend index cut-off for a cell to count (lower index = heavier rain); the
+     *   default takes every real rain tier, a higher threshold (e.g. >= 1 mm/h) finds just the
+     *   cores that read as distinct clouds on the map.
      */
-    fun findBlobs(grid: PresenceGrid, minSizeCells: Int = 9, labels: IntArray? = null): List<Blob> {
+    fun findBlobs(
+        grid: PresenceGrid,
+        minSizeCells: Int = 9,
+        labels: IntArray? = null,
+        maxIndex: Int = RadarLegend.RAIN_THRESHOLD_INDEX,
+    ): List<Blob> {
+        fun counts(row: Int, col: Int) = grid.valueAt(row, col) <= maxIndex
         val visited = Array(grid.height) { BooleanArray(grid.width) }
         val blobs = mutableListOf<Blob>()
         var nextId = 0
 
         for (row in 0 until grid.height) {
             for (col in 0 until grid.width) {
-                if (visited[row][col] || !grid.isPresent(row, col)) continue
+                if (visited[row][col] || !counts(row, col)) continue
 
                 val cells = mutableListOf<IntArray>()
                 val correctedValues = mutableListOf<Int>()
@@ -59,7 +68,7 @@ object ConnectedComponents {
                     for ((dr, dc) in NEIGHBORS) {
                         val nr = r + dr
                         val nc = c + dc
-                        if (grid.inBounds(nr, nc) && !visited[nr][nc] && grid.isPresent(nr, nc)) {
+                        if (grid.inBounds(nr, nc) && !visited[nr][nc] && counts(nr, nc)) {
                             visited[nr][nc] = true
                             queue.add(intArrayOf(nr, nc))
                         }

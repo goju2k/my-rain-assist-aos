@@ -49,4 +49,17 @@ class QuadMapperTest {
         assertEquals(expected.lat, actual.lat, toleranceDeg)
         assertEquals(expected.lon, actual.lon, toleranceDeg)
     }
+
+    @Test
+    fun `KMA composite extent places known points on the pixels KMA's own map uses`() {
+        // Expected pixels computed independently with proj4 from KMA's declared radar.extent
+        // (weather.go.kr kmap.bb.js) on the 1453px image.
+        val uv = QuadMapper.KMA_COMPOSITE.inverseMap(LatLon(37.621, 127.157))!!
+        assertEquals(765.1, uv.u * 1452, 0.2)
+        assertEquals(417.3, uv.v * 1452, 0.2)
+        // ...and the old corner-fit box is the ~6 km-off one the app used to use.
+        val old = mapper.inverseMap(LatLon(37.621, 127.157))!!
+        assertEquals(771.2, old.u * 1452, 0.2)
+        assertEquals(411.3, old.v * 1452, 0.2)
+    }
 }

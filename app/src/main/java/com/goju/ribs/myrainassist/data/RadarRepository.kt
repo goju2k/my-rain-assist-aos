@@ -64,7 +64,7 @@ class RadarRepository {
         }
         if (idx.frames.size < 2) throw IOException("v2 index has ${idx.frames.size} frames")
 
-        val roi = ForecastEngine.roiFor(idx.corners, userLocation, idx.imageWidth, idx.imageHeight)
+        val roi = ForecastEngine.roiFor(userLocation, idx.imageWidth, idx.imageHeight)
             ?: return Fetch(RadarResponse(idx.corners, emptyList()), SOURCE_V2, bytes)
 
         val liveTms = idx.frames.map { it.first }.toSet()
