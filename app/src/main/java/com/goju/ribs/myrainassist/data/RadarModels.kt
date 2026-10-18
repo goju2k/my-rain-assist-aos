@@ -12,12 +12,21 @@ private val TM_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd
 // a blob's position forward to "now" before projecting arrival) has never actually engaged.
 private val KST: ZoneId = ZoneId.of("Asia/Seoul")
 
-/** One radar mosaic frame. [grid] is row-major, one byte per cell, size == gridWidth*gridHeight. */
+/**
+ * One radar mosaic frame, or a rectangular window of one. [grid] is row-major, one byte per cell,
+ * size == gridWidth*gridHeight. A window (assembled from tiles around the user) sits at
+ * [originCol]/[originRow] inside the full [fullWidth]x[fullHeight] mosaic; a whole frame is just
+ * the window at origin 0 covering everything.
+ */
 data class RadarFrame(
     val tm: String,
     val gridWidth: Int,
     val gridHeight: Int,
     val grid: ByteArray,
+    val originCol: Int = 0,
+    val originRow: Int = 0,
+    val fullWidth: Int = gridWidth,
+    val fullHeight: Int = gridHeight,
 ) {
     /** Epoch minutes derived from [tm], used to compute actual inter-frame deltas. */
     val epochMinute: Long by lazy {

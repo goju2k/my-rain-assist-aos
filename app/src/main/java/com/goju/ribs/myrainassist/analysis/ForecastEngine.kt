@@ -1,226 +1,283 @@
 package com.goju.ribs.myrainassist.analysis
 
 import com.goju.ribs.myrainassist.data.LatLon
+import com.goju.ribs.myrainassist.data.RadarFrame
+import com.goju.ribs.myrainassist.data.RadarLegend
 import com.goju.ribs.myrainassist.data.RadarResponse
-import com.goju.ribs.myrainassist.data.haversineKm
 import com.goju.ribs.myrainassist.data.bearingDeg
+import com.goju.ribs.myrainassist.data.haversineKm
 import com.goju.ribs.myrainassist.geo.QuadMapper
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * Combines geo mapping, blob detection and motion estimation into a single forecast for the
- * user's location. Returns null when the user's location cannot be resolved onto the radar grid
- * (e.g. outside coverage, or a degenerate quad) — the caller should skip this poll cycle.
+ * Turns a short radar history into a forecast for one location. Only a window of
+ * [ROI_RADIUS_KM] around the user is analyzed — nothing farther can reach them within the forecast
+ * horizon at any plausible echo speed — which keeps each cycle cheap enough to run on a phone.
+ *
+ * Arrival is decided by tracing backwards along each blob's motion (semi-Lagrangian): "will this
+ * blob cover me in t minutes" is the same question as "is there a cell of this blob, right now,
+ * at my position minus its velocity x t". That answers for the blob's leading edge and for its
+ * full width — unlike following a single representative point, which only notices a broad rain
+ * band once its core gets close, and which called "raining now" whenever that point merely came
+ * within a few km. Returns null when the location can't be placed on the radar grid.
  */
 object ForecastEngine {
 
-    /** A blob's distance to the user and the corroborated reading at the point closest to them — not the blob's overall peak, which can sit far away inside the same connected blob. */
-    private data class BlobProximity(val blob: Blob, val distanceKm: Double, val nearestCellMmh: Double)
+    /** How far around the user the radar is analyzed (also what the app downloads). */
+    const val ROI_RADIUS_KM = 150.0
 
     private const val MIN_BLOB_SIZE_CELLS = 9
-    private const val MIN_ARRIVAL_THRESHOLD_KM = 3.0
-    private const val ARRIVAL_THRESHOLD_CELL_MULTIPLIER = 1.5
-    // How far ahead to extrapolate a blob's straight-line path/arrival — separate from
-    // MAX_LAG_MINUTES below, which bounds a different thing (frame staleness correction).
-    // The radar API only ever gives ~4 frames of history (~20-25 tracked minutes), so a 90-minute
-    // straight-line forecast drawn off that little confirmed motion reads as far more confident
-    // than it is (the drawn future segment could end up 3-6x longer than the observed past
-    // segment). Capped to how far a real measurement run could plausibly extend.
+    // The radar API only ever gives ~4 frames of history (~15-20 tracked minutes), so a long
+    // straight-line extrapolation off that little confirmed motion reads as far more confident
+    // than it is. Capped to how far a real measurement run could plausibly extend.
     private const val MAX_FORECAST_MINUTES = 30
     // Upper bound for lagMinutes (how stale the latest radar frame is vs. now) — unrelated to how
     // far into the future a blob's path is drawn.
     private const val MAX_LAG_MINUTES = 90
-    private const val FORECAST_STEP_MINUTES = 5
     private const val PATH_SAMPLE_INTERVAL_MINUTES = 15
     private const val KM_PER_DEGREE_LAT = 111.32
 
-    // Does NOT count as "raining here" on its own — being close to a strong cell isn't the same
-    // as it being overhead, and the app should say "raining" only when the radar actually shows
-    // that. This only supplies a more honest intensity reading (see nearbyStrongBlob below) for
-    // cycles where [isRainingNow] or [minEta] already established ACTIVE some other way.
-    private const val NEARBY_STRONG_RADIUS_KM = 3.0
-    private const val NEARBY_STRONG_MIN_MMH = 15.0
-    private const val NEARBY_STRONG_MIN_CELLS = 30
+    // A blob counts as covering the user when one of its cells falls within this many cells
+    // (Chebyshev) of the user's cell: 1 = the 3x3 neighborhood, about ±0.7 km — enough to absorb
+    // location/projection error without calling a cloud kilometers away "overhead".
+    private const val COVER_RADIUS_CELLS = 1
 
     // Weak echo (< "약한 비" ceiling) still this far out is more likely to dissipate before it
     // ever arrives than to actually reach the user, so it isn't worth an ETA-based forecast/alert.
     private const val WEAK_FAR_SUPPRESS_DISTANCE_KM = 10.0
     private const val WEAK_RAIN_MAX_MMH = 3.0
 
-    // Small cells are usually short-lived (they scatter/dissipate rather than travel far), so a
-    // fast small blob linearly extrapolated MAX_FORECAST_MINUTES out draws a long straight line
-    // that reads as a confident forecast but isn't one. Large, established systems keep the full
-    // (now-shortened) horizon; small ones are capped to how far back we actually confirmed their
-    // motion (symmetric past/future window) so the line's length reflects how much real tracking
-    // backs it.
+    // Small cells are usually short-lived (they scatter/dissipate rather than travel far), so they
+    // only get to extrapolate as far forward as their motion is backed by observation.
     private const val LARGE_BLOB_MIN_CELLS = 50
     private const val MIN_FORECAST_HORIZON_MINUTES = PATH_SAMPLE_INTERVAL_MINUTES
+
+    // An incoming band's edge is usually its weakest part; report the heaviest rain the user is
+    // expected to get over this long after arrival rather than just the first drizzle.
+    private const val INTENSITY_LOOKAHEAD_MINUTES = 15
+    private const val ETA_ROUNDING_MINUTES = 5
+
+    /** The analyzed window, in full-mosaic cell coordinates. */
+    data class Roi(val row0: Int, val col0: Int, val width: Int, val height: Int)
+
+    /** Where the user sits on the mosaic and how big a cell is there. */
+    private class Placement(val row: Int, val col: Int, val kmPerCellX: Double, val kmPerCellY: Double, val roi: Roi)
+
+    private fun place(mapper: QuadMapper, userLocation: LatLon, fullWidth: Int, fullHeight: Int): Placement? {
+        val uv = mapper.inverseMap(userLocation) ?: return null
+        val row = (uv.v * (fullHeight - 1)).roundToInt()
+        val col = (uv.u * (fullWidth - 1)).roundToInt()
+        val (kmPerCellX, kmPerCellY) = cellSizeKm(mapper, uv.u, uv.v, fullWidth, fullHeight)
+        val radius = ceil(ROI_RADIUS_KM / ((kmPerCellX + kmPerCellY) / 2)).toInt()
+        return Placement(row, col, kmPerCellX, kmPerCellY, roiAround(row, col, radius, fullWidth, fullHeight))
+    }
+
+    /**
+     * The window [computeForecast] will analyze for [userLocation] — exactly what the app needs to
+     * download (see RadarRepository). Null when the location is off the radar grid.
+     */
+    fun roiFor(corners: List<LatLon>, userLocation: LatLon, fullWidth: Int, fullHeight: Int): Roi? =
+        place(QuadMapper(corners), userLocation, fullWidth, fullHeight)?.roi
+
+    private class Scene(
+        val mapper: QuadMapper,
+        val roi: Roi,
+        val fullWidth: Int,
+        val fullHeight: Int,
+        val grid: PresenceGrid,
+        val labels: IntArray,
+    ) {
+        fun latLonOf(row: Double, col: Double): LatLon =
+            mapper.forwardMap((roi.col0 + col) / (fullWidth - 1), (roi.row0 + row) / (fullHeight - 1))
+
+        /**
+         * Heaviest corroborated reading among [blobId]'s cells within [COVER_RADIUS_CELLS] of
+         * (row, col), or null if the blob doesn't cover that point.
+         */
+        fun coverMmh(blobId: Int, row: Double, col: Double): Double? {
+            val r = row.roundToInt()
+            val c = col.roundToInt()
+            var best: Double? = null
+            for (dr in -COVER_RADIUS_CELLS..COVER_RADIUS_CELLS) for (dc in -COVER_RADIUS_CELLS..COVER_RADIUS_CELLS) {
+                val rr = r + dr
+                val cc = c + dc
+                if (!grid.inBounds(rr, cc) || labels[rr * grid.width + cc] != blobId) continue
+                val mmh = grid.corroboratedMmhAt(rr, cc)
+                if (best == null || mmh > best) best = mmh
+            }
+            return best
+        }
+    }
 
     fun computeForecast(response: RadarResponse, userLocation: LatLon, nowEpochMs: Long): RainForecastResult? {
         if (response.frames.size < 2) return null
         val mapper = QuadMapper(response.corners)
-        val userUV = mapper.inverseMap(userLocation) ?: return null
-
         val latestFrame = response.frames.last()
-        val latestGrid = PresenceGrid.from(latestFrame)
-        val userRow = (userUV.v * (latestGrid.height - 1)).roundToInt()
-        val userCol = (userUV.u * (latestGrid.width - 1)).roundToInt()
+        val fullWidth = latestFrame.fullWidth
+        val fullHeight = latestFrame.fullHeight
+        val placement = place(mapper, userLocation, fullWidth, fullHeight) ?: return null
+        val kmPerCellX = placement.kmPerCellX
+        val kmPerCellY = placement.kmPerCellY
+        val kmPerCell = (kmPerCellX + kmPerCellY) / 2
+        val roi = placement.roi
+        val grids = response.frames.map { crop(it, roi) }
+        val latestGrid = grids.last()
+        val userRow = (placement.row - roi.row0).toDouble()
+        val userCol = (placement.col - roi.col0).toDouble()
 
-        // The latest frame's tm can lag behind the actual current time (e.g. the upstream KMA
-        // feed stalling for a while before a fresh frame shows up), so blob positions are known
-        // only as of tm, not as of now. Extrapolate forward by this lag before projecting arrival
-        // times, otherwise ETA/state would be computed as if tm were the current moment.
+        // The latest frame's tm lags behind the actual current time (KMA's publish delay, or the
+        // feed stalling for a while), so blob positions are known only as of tm, not as of now.
+        // Every lookup below advances by this lag first, so "now" really means now.
         val lagMinutes = ((nowEpochMs / 60_000) - latestFrame.epochMinute)
             .coerceIn(0, MAX_LAG_MINUTES.toLong())
             .toInt()
 
-        val blobs = ConnectedComponents.findBlobs(latestGrid, MIN_BLOB_SIZE_CELLS)
-        // A raw single-pixel isPresent() check has no noise filtering, unlike every other rain
-        // signal here (blobs require MIN_BLOB_SIZE_CELLS connected cells) — an isolated
-        // compression/clutter pixel under the user could otherwise flip the state straight to
-        // "raining now" without ever being confirmed as a real precipitation feature.
-        val isRainingNow = blobs.any { blob -> blob.cells.any { it[0] == userRow && it[1] == userCol } }
-        val earlierFrames = response.frames.dropLast(1)
-        val earlierGrids = earlierFrames.map { PresenceGrid.from(it) }
-        val minuteDeltas = earlierFrames.map { latestFrame.epochMinute - it.epochMinute }
+        val labels = IntArray(latestGrid.width * latestGrid.height) { -1 }
+        val blobs = ConnectedComponents.findBlobs(latestGrid, MIN_BLOB_SIZE_CELLS, labels)
+        val scene = Scene(mapper, roi, fullWidth, fullHeight, latestGrid, labels)
 
-        val motions = MotionEstimator.estimate(blobs, earlierGrids, minuteDeltas)
-        val blobForecasts = motions.map { motion -> buildBlobForecast(motion, mapper, latestGrid, userLocation, lagMinutes) }
-
-        // Distance uses every detected blob (not just ones with an estimated velocity), since a
-        // nearby-but-unmatched blob is still "rain nearby" for the purposes of the stop condition.
-        // Uses the blob's *nearest* cell to the user, not its centroid — a large or elongated blob
-        // can have its centroid many km away while its near edge sits right on top of the user,
-        // which previously made the "rain stopped/passed" check fire while rain pixels were still
-        // visibly overhead.
-        //
-        // Also reads the corroborated mmh at that same nearest cell (not blob.peakMmh, which is
-        // the heaviest reading anywhere in the whole connected blob) — a widespread weak-rain
-        // system spanning many km can connect into one blob with a stray intense-looking patch
-        // far from the user, and reporting that far-away peak as "the rain near you" produced
-        // 매우 강한 비(90-110mm/h) alerts on days with only light rain locally.
-        val blobProximities = blobs.map { blob ->
-            // blob.cells is never empty (ConnectedComponents only keeps blobs with >= minSizeCells).
-            val nearestCell = blob.cells.minByOrNull { cell ->
-                val dr = cell[0] - userRow
-                val dc = cell[1] - userCol
-                dr * dr + dc * dc
-            }!!
-            val nearestPoint = mapper.forwardMap(
-                nearestCell[1] / (latestGrid.width - 1).toDouble(),
-                nearestCell[0] / (latestGrid.height - 1).toDouble(),
-            )
-            BlobProximity(
-                blob = blob,
-                distanceKm = haversineKm(nearestPoint, userLocation),
-                nearestCellMmh = latestGrid.corroboratedMmhAt(nearestCell[0], nearestCell[1]),
-            )
+        val nearestKm = blobs.associate { blob ->
+            blob.id to blob.cells.minOf { cell ->
+                val dy = (cell[0] - userRow) * kmPerCellY
+                val dx = (cell[1] - userCol) * kmPerCellX
+                sqrt(dx * dx + dy * dy)
+            }
         }
-        val nearestRainDistanceKm = blobProximities.minOfOrNull { it.distanceKm }
-        val nearbyStrongBlob = blobProximities
-            .filter { it.distanceKm <= NEARBY_STRONG_RADIUS_KM && it.blob.sizeCells >= NEARBY_STRONG_MIN_CELLS && it.nearestCellMmh >= NEARBY_STRONG_MIN_MMH }
-            .minByOrNull { it.distanceKm }
+        // A weak, still-distant cell is more likely to dissipate than to arrive, so it only counts
+        // if it's already overhead — and since it's neither drawn on the map nor able to arrive,
+        // its motion isn't worth estimating at all (a rainy area holds hundreds of these).
+        fun isWeakAndFar(blob: Blob) = blob.peakMmh < WEAK_RAIN_MAX_MMH && nearestKm.getValue(blob.id) > WEAK_FAR_SUPPRESS_DISTANCE_KM
 
-        val minEta = blobForecasts.mapNotNull { it.arrivalMinutes }.minOrNull()
-        val etaRounded = minEta?.let { roundToNearest(it, 10) }
-        // A lag-corrected blob forecast can already place a blob on top of the user (minEta == 0)
-        // even though the stale grid's isRainingNow check hasn't caught up yet. Being close to a
-        // strong cell (nearbyStrongBlob) does NOT make this true on its own — a storm sitting a
-        // few km away with no confirmed motion toward the user is "incoming soon" at worst, not
-        // "raining here right now". The radar picture and the reported state must agree: no cloud
-        // overhead means not ACTIVE, however strong or close the nearest blob is.
-        val activeNow = isRainingNow || minEta == 0
+        val motions = MotionEstimator.estimate(
+            blobs = blobs,
+            labels = labels,
+            latest = LevelGrid.from(latestGrid),
+            earlier = grids.dropLast(1).map { LevelGrid.from(it) },
+            minuteDeltas = response.frames.dropLast(1).map { latestFrame.epochMinute - it.epochMinute },
+            kmPerCell = kmPerCell,
+            needsMotion = { !isWeakAndFar(it) },
+        )
+
+        // Where (in ROI cells) the part of this blob that will be over the user t minutes from now sits in the latest frame.
+        fun sourceRow(m: MotionEstimator.BlobMotion, t: Int) = userRow - m.vyCellsPerMin * (lagMinutes + t)
+        fun sourceCol(m: MotionEstimator.BlobMotion, t: Int) = userCol - m.vxCellsPerMin * (lagMinutes + t)
+        fun coverAt(m: MotionEstimator.BlobMotion, t: Int) = scene.coverMmh(m.blob.id, sourceRow(m, t), sourceCol(m, t))
+
+        val arrivals = motions.associateWith { motion ->
+            val blob = motion.blob
+            val horizon = if (blob.sizeCells >= LARGE_BLOB_MIN_CELLS) {
+                MAX_FORECAST_MINUTES
+            } else {
+                motion.trackedSpanMinutes.toInt().coerceIn(MIN_FORECAST_HORIZON_MINUTES, MAX_FORECAST_MINUTES)
+            }
+            val lastT = if (isWeakAndFar(blob)) 0 else horizon
+            (0..lastT).firstOrNull { t -> coverAt(motion, t) != null }
+        }
+
+        val arriving = arrivals.filterValues { it != null }
+        val minArrival = arriving.values.minOfOrNull { it!! }
         val state = when {
-            activeNow -> ForecastState.ACTIVE
-            etaRounded != null -> ForecastState.INCOMING
+            minArrival == 0 -> ForecastState.ACTIVE
+            minArrival != null -> ForecastState.INCOMING
             else -> ForecastState.NONE
         }
 
-        val intensityMmh = when {
-            state == ForecastState.ACTIVE && isRainingNow -> latestGrid.corroboratedMmhAt(userRow, userCol)
-            state == ForecastState.ACTIVE && nearbyStrongBlob != null -> nearbyStrongBlob.nearestCellMmh
-            state == ForecastState.ACTIVE -> blobForecasts.firstOrNull { it.arrivalMinutes == 0 }?.peakMmh
-            state == ForecastState.INCOMING -> blobForecasts.filter { it.arrivalMinutes != null }.minByOrNull { it.arrivalMinutes!! }?.peakMmh
-            else -> null
+        val intensityMmh: Double? = when (state) {
+            ForecastState.ACTIVE -> arriving.filterValues { it == 0 }.keys.mapNotNull { coverAt(it, 0) }.maxOrNull()
+            ForecastState.INCOMING -> arriving.filterValues { it == minArrival }.keys.flatMap { m ->
+                (minArrival!!..minArrival + INTENSITY_LOOKAHEAD_MINUTES).mapNotNull { t -> coverAt(m, t) }
+            }.maxOrNull()
+            ForecastState.NONE -> null
         }
 
-        // Every blob across the whole grid ends up here (findBlobs has no intensity filter), and
-        // most detected cells are "약한 비" (< 3mm/h) — a shade of blue barely distinguishable
-        // from the no-rain background. Drawing a path/dot for those reads as "nothing here" to the
-        // eye even though the cell is technically present, so only forward blobs that would
-        // actually look like rain on the map. arrivalMinutes/state/intensity above already used
-        // the unfiltered blobForecasts, so this filter only affects what's drawn. A blob with a
-        // non-null arrivalMinutes is kept regardless of intensity — it's the blob driving
-        // state/etaMinutes, so dropping it here would let the web report "rain incoming" while
-        // shipping zero blobs marked as the forecast target to actually highlight.
+        // While it's raining: the first minute at which no blob (each moving its own way) covers
+        // the user any more. Null = still raining at the end of the horizon (or not raining).
+        val rainEndMinutes = if (state != ForecastState.ACTIVE) {
+            null
+        } else {
+            (1..MAX_FORECAST_MINUTES).firstOrNull { t -> motions.none { coverAt(it, t) != null } }
+        }
+
+        val blobForecasts = motions.map { motion ->
+            buildBlobForecast(motion, scene, lagMinutes, arrivals[motion])
+        }
+        // Most detected cells are "약한 비" (< 3mm/h), a shade of blue barely distinguishable from
+        // the no-rain background, so only forward blobs that would actually look like rain on the
+        // map — plus any blob driving the forecast, so the web always has the target to highlight.
         val visibleBlobForecasts = blobForecasts.filter { it.peakMmh >= WEAK_RAIN_MAX_MMH || it.arrivalMinutes != null }
 
         return RainForecastResult(
             generatedAtEpochMs = nowEpochMs,
             userLocation = userLocation,
             state = state,
-            etaMinutes = if (activeNow) 0 else etaRounded,
+            etaMinutes = minArrival?.let { roundEta(it) },
             blobs = visibleBlobForecasts,
-            nearestRainDistanceKm = nearestRainDistanceKm,
+            nearestRainDistanceKm = nearestKm.values.minOrNull(),
             intensityMmh = intensityMmh,
             latestFrameTm = latestFrame.tm,
             latestFrameEpochMs = latestFrame.epochMinute * 60_000L,
             frameCount = response.frames.size,
             lagMinutes = lagMinutes,
+            rainEndMinutes = rainEndMinutes,
         )
     }
 
-    private fun buildBlobForecast(
-        motion: MotionEstimator.BlobMotion,
-        mapper: QuadMapper,
-        grid: PresenceGrid,
-        userLocation: LatLon,
-        lagMinutes: Int,
-    ): BlobForecast {
+    /** 0 stays 0 ("now"); anything later rounds to the nearest 5 minutes but never down to 0. */
+    private fun roundEta(minutes: Int): Int =
+        if (minutes == 0) 0 else max(ETA_ROUNDING_MINUTES, ((minutes + ETA_ROUNDING_MINUTES / 2) / ETA_ROUNDING_MINUTES) * ETA_ROUNDING_MINUTES)
+
+    private fun cellSizeKm(mapper: QuadMapper, u: Double, v: Double, fullWidth: Int, fullHeight: Int): Pair<Double, Double> {
+        val du = 1.0 / (fullWidth - 1)
+        val dv = 1.0 / (fullHeight - 1)
+        val here = mapper.forwardMap(u, v)
+        val east = mapper.forwardMap(if (u + du <= 1.0) u + du else u - du, v)
+        val south = mapper.forwardMap(u, if (v + dv <= 1.0) v + dv else v - dv)
+        return haversineKm(here, east) to haversineKm(here, south)
+    }
+
+    private fun roiAround(row: Int, col: Int, radius: Int, fullWidth: Int, fullHeight: Int): Roi {
+        val row0 = (row - radius).coerceAtLeast(0)
+        val col0 = (col - radius).coerceAtLeast(0)
+        val row1 = (row + radius).coerceAtMost(fullHeight - 1)
+        val col1 = (col + radius).coerceAtMost(fullWidth - 1)
+        return Roi(row0, col0, col1 - col0 + 1, row1 - row0 + 1)
+    }
+
+    /** Copies [roi] out of [frame] (itself possibly just a window of the mosaic); cells the frame doesn't cover read as no-data. */
+    private fun crop(frame: RadarFrame, roi: Roi): PresenceGrid {
+        val out = ByteArray(roi.width * roi.height) { RadarLegend.NO_DATA_INDEX.toByte() }
+        for (r in 0 until roi.height) {
+            val frameRow = roi.row0 + r - frame.originRow
+            if (frameRow !in 0 until frame.gridHeight) continue
+            for (c in 0 until roi.width) {
+                val frameCol = roi.col0 + c - frame.originCol
+                if (frameCol !in 0 until frame.gridWidth) continue
+                out[r * roi.width + c] = frame.grid[frameRow * frame.gridWidth + frameCol]
+            }
+        }
+        return PresenceGrid(roi.width, roi.height, out)
+    }
+
+    private fun buildBlobForecast(motion: MotionEstimator.BlobMotion, scene: Scene, lagMinutes: Int, arrivalMinutes: Int?): BlobForecast {
         val blob = motion.blob
-        val u = blob.centroidCol / (grid.width - 1)
-        val v = blob.centroidRow / (grid.height - 1)
-        val centroidAtTm = mapper.forwardMap(u, v)
+        val centroidAtTm = scene.latLonOf(blob.centroidRow, blob.centroidCol)
+        val kmPerCellX = haversineKm(centroidAtTm, scene.latLonOf(blob.centroidRow, blob.centroidCol + 1))
+        val kmPerCellY = haversineKm(centroidAtTm, scene.latLonOf(blob.centroidRow + 1, blob.centroidCol))
 
-        val du = 1.0 / (grid.width - 1)
-        val dv = 1.0 / (grid.height - 1)
-        val eastU = if (u + du <= 1.0) u + du else u - du
-        val southV = if (v + dv <= 1.0) v + dv else v - dv
-        val kmPerCellX = haversineKm(centroidAtTm, mapper.forwardMap(eastU, v))
-        val kmPerCellY = haversineKm(centroidAtTm, mapper.forwardMap(u, southV))
-        val cellDiagonalKm = sqrt(kmPerCellX * kmPerCellX + kmPerCellY * kmPerCellY)
-        val thresholdKm = max(MIN_ARRIVAL_THRESHOLD_KM, ARRIVAL_THRESHOLD_CELL_MULTIPLIER * cellDiagonalKm)
-
-        val speedKmh = sqrt(
-            (motion.vxCellsPerMin * kmPerCellX) * (motion.vxCellsPerMin * kmPerCellX) +
-                (motion.vyCellsPerMin * kmPerCellY) * (motion.vyCellsPerMin * kmPerCellY),
-        ) * 60.0
+        val eastKmPerMin = motion.vxCellsPerMin * kmPerCellX
         // row increases southward, so northward displacement is the negative of vy.
-        val headingDeg = bearingDeg(eastKm = motion.vxCellsPerMin * kmPerCellX, northKm = -motion.vyCellsPerMin * kmPerCellY)
+        val northKmPerMin = -motion.vyCellsPerMin * kmPerCellY
+        val speedKmh = sqrt(eastKmPerMin * eastKmPerMin + northKmPerMin * northKmPerMin) * 60.0
+        val headingDeg = bearingDeg(eastKm = eastKmPerMin, northKm = northKmPerMin)
 
-        // positionAt(minutesFromTm) walks the blob forward from its last-observed (tm) position;
         // minutesFromTm = lagMinutes + t gives the position "t minutes from now".
-        fun positionAt(minutesFromTm: Int): LatLon = offsetLatLon(
-            centroidAtTm,
-            eastKm = motion.vxCellsPerMin * kmPerCellX * minutesFromTm,
-            northKm = -motion.vyCellsPerMin * kmPerCellY * minutesFromTm,
-        )
+        fun positionAt(minutesFromTm: Int): LatLon =
+            offsetLatLon(centroidAtTm, eastKm = eastKmPerMin * minutesFromTm, northKm = northKmPerMin * minutesFromTm)
 
-        val centroidNow = positionAt(lagMinutes)
-
-        // A weak, still-distant cell is more likely to dissipate before it ever gets here than to
-        // actually arrive, so it's excluded from the arrival/ETA math entirely (it still shows up
-        // in `path` for map display, just without feeding a notification-worthy ETA). Re-evaluated
-        // fresh every poll cycle, so as soon as it's genuinely within range this stops applying.
-        val suppressArrival = blob.peakMmh < WEAK_RAIN_MAX_MMH &&
-            haversineKm(centroidNow, userLocation) > WEAK_FAR_SUPPRESS_DISTANCE_KM
-
-        // Small blobs only get to extrapolate as far forward as their motion is actually backed by
-        // observation (see [MotionEstimator.BlobMotion.trackedSpanMinutes]) — a floor keeps them
-        // from collapsing to a single point when only one earlier frame was matched.
         val horizonMinutes = if (blob.sizeCells >= LARGE_BLOB_MIN_CELLS) {
             MAX_FORECAST_MINUTES
         } else {
@@ -228,43 +285,26 @@ object ForecastEngine {
         }
 
         // Real observed track (negative minutesFromNow), one point per earlier frame that actually
-        // matched — as opposed to everything from t=0 onward, which is the linear-model forecast.
-        // Each point uses its own match's displacement (not the aggregate median rate), so this is
-        // the blob's true past path, not a backward projection of the future line. See
-        // docs/webview-interface.md 3.1.1 for how the web should render the past/future split.
+        // matched — each from its own match's displacement, so this is the blob's true past path,
+        // not a backward projection of the future line. See docs/webview-interface.md 3.1.1.
         val pastPoints = motion.matches.map { match ->
-            val pos = offsetLatLon(
-                centroidAtTm,
-                eastKm = -match.dxCells * kmPerCellX,
-                northKm = match.dyCells * kmPerCellY,
-            )
+            val pos = offsetLatLon(centroidAtTm, eastKm = -match.dxCells * kmPerCellX, northKm = match.dyCells * kmPerCellY)
             PathPoint(-(lagMinutes + match.minutesAgo.toInt()), pos)
         }
-
-        val path = (pastPoints + PathPoint(0, centroidNow)).toMutableList()
-        var arrivalMinutes: Int? = if (!suppressArrival && haversineKm(centroidNow, userLocation) <= thresholdKm) 0 else null
-        var t = FORECAST_STEP_MINUTES
-        while (t <= horizonMinutes) {
-            val pos = positionAt(lagMinutes + t)
-            if (!suppressArrival && arrivalMinutes == null && haversineKm(pos, userLocation) <= thresholdKm) {
-                arrivalMinutes = t
-            }
-            if (t % PATH_SAMPLE_INTERVAL_MINUTES == 0) path.add(PathPoint(t, pos))
-            t += FORECAST_STEP_MINUTES
-        }
+        val futurePoints = (PATH_SAMPLE_INTERVAL_MINUTES..horizonMinutes step PATH_SAMPLE_INTERVAL_MINUTES)
+            .map { t -> PathPoint(t, positionAt(lagMinutes + t)) }
 
         return BlobForecast(
             id = "blob-${blob.id}",
             sizeCells = blob.sizeCells,
-            centroid = centroidNow,
+            centroid = positionAt(lagMinutes),
             // Position as actually observed in the latest radar frame (tm), before the lag
-            // extrapolation above pushes it forward to "now" — lets the web line up the drawn
-            // path with whatever the (possibly stale) radar image is currently showing. See
-            // docs/webview-interface.md.
+            // extrapolation — lets the web line up the drawn path with the (possibly stale) radar
+            // image it's showing. See docs/webview-interface.md.
             observedCentroid = centroidAtTm,
             headingDeg = headingDeg,
             speedKmh = speedKmh,
-            path = path,
+            path = pastPoints + PathPoint(0, positionAt(lagMinutes)) + futurePoints,
             arrivalMinutes = arrivalMinutes,
             peakMmh = blob.peakMmh,
         )
@@ -275,6 +315,4 @@ object ForecastEngine {
         val dLon = eastKm / (KM_PER_DEGREE_LAT * cos(Math.toRadians(origin.lat)))
         return LatLon(origin.lat + dLat, origin.lon + dLon)
     }
-
-    private fun roundToNearest(value: Int, step: Int): Int = ((value + step / 2) / step) * step
 }

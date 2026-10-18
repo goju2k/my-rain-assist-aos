@@ -19,3 +19,6 @@ local.properties
 # Release signing — never commit the keystore or its passwords.
 /keystore.properties
 /keystore/*.jks
+
+# Backtest radar frame cache (KMA PNGs, re-downloadable)
+/.backtest-cache/

@@ -39,6 +39,8 @@ object RadarLegend {
 
     /** Indices at or below this are a real rain tier; index 23 (0 mm/h) and the no-data sentinel are not. */
     const val RAIN_THRESHOLD_INDEX = 22
+    /** The rendered "0 mm/h" tier — what a covered-but-dry cell holds. */
+    const val NO_RAIN_INDEX = 23
     const val NO_DATA_INDEX = 255
 
     /**

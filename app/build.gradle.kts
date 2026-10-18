@@ -70,6 +70,17 @@ android {
     buildFeatures {
         compose = true
     }
+    // Opt-in radar backtest (see ForecastBacktest): -Pbacktest.from=yyyyMMddHHmm [-Pbacktest.to=...] [-Pbacktest.lagMinutes=8]
+    testOptions {
+        unitTests.all { test ->
+            test.maxHeapSize = "2g"
+            listOf("backtest.from", "backtest.to", "backtest.lagMinutes", "backtest.probe").forEach { key ->
+                project.findProperty(key)?.let { test.systemProperty(key, it.toString()) }
+            }
+            test.systemProperty("backtest.cacheDir", rootProject.file(".backtest-cache").path)
+            test.systemProperty("backtest.reportDir", layout.buildDirectory.dir("backtest").get().asFile.path)
+        }
+    }
 }
 
 androidComponents {

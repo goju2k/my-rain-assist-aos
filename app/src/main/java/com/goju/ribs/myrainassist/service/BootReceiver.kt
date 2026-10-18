@@ -11,7 +11,7 @@ import androidx.core.content.ContextCompat
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
 
         val hasCoarseLocation = ContextCompat.checkSelfPermission(
             context,
@@ -23,7 +23,7 @@ class BootReceiver : BroadcastReceiver() {
         ) == PackageManager.PERMISSION_GRANTED
 
         if (!hasCoarseLocation || !hasBackgroundLocation) {
-            Log.i(TAG, "Skipping service restart on boot: required permissions not granted")
+            Log.i(TAG, "Skipping service restart (${intent.action}): required permissions not granted")
             return
         }
 

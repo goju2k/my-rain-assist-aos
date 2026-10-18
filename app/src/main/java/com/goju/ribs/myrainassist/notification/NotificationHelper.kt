@@ -65,20 +65,31 @@ object NotificationHelper {
 
     /**
      * [justStopped] is true for exactly the one poll cycle where rain that was actually overhead
-     * just cleared. [etaMinutes] mirrors [showIncomingRainAlert]'s wording (same phrase builder) so
+     * just cleared. [rainEndMinutes] (ACTIVE only) adds when it's expected to clear — shown only in
+     * this always-on notification, never as its own alert. [etaMinutes] mirrors
+     * [showIncomingRainAlert]'s wording (same phrase builder) so
      * the always-on ongoing notification never reads vaguer than the alert that was just shown for
      * the same state — they used to drift apart (e.g. "비가 곧 올 것 같아요" here vs "20분 뒤 비가
      * 옵니다" in the alert).
      */
-    fun ongoingTextFor(state: ForecastState, justStopped: Boolean, etaMinutes: Int?, intensityMmh: Double? = null): String = if (justStopped) {
+    fun ongoingTextFor(
+        state: ForecastState,
+        justStopped: Boolean,
+        etaMinutes: Int?,
+        intensityMmh: Double? = null,
+        rainEndMinutes: Int? = null,
+    ): String = if (justStopped) {
         "비가 그쳤어요"
     } else {
         when (state) {
-            ForecastState.ACTIVE -> "${RadarLegend.intensityPrefix(intensityMmh)}비가 오고 있어요"
+            ForecastState.ACTIVE -> "${RadarLegend.intensityPrefix(intensityMmh)}비가 오고 있어요" +
+                (rainEndMinutes?.let { " · ${roundUpToFive(it)}분 뒤쯤 그칠 것 같아요" } ?: "")
             ForecastState.INCOMING -> etaMinutes?.let { incomingRainText(it, intensityMmh) } ?: DEFAULT_ONGOING_TEXT
             ForecastState.NONE -> DEFAULT_ONGOING_TEXT
         }
     }
+
+    private fun roundUpToFive(minutes: Int): Int = ((minutes + 4) / 5) * 5
 
     // Past this horizon the linear motion extrapolation is stretched thin (it's fit from only the
     // last ~15 minutes of frames), so the wording should read as a guess rather than a prediction.

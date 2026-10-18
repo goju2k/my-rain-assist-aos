@@ -41,6 +41,8 @@ data class RainForecastResult(
     val frameCount: Int,
     /** Minutes the latest frame's tm lagged behind [generatedAtEpochMs]. */
     val lagMinutes: Int,
+    /** ACTIVE only: minutes from now until the user is expected to be clear of rain; null if not raining or still raining at the end of the forecast horizon. */
+    val rainEndMinutes: Int? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("generatedAtEpochMs", generatedAtEpochMs)
@@ -54,6 +56,7 @@ data class RainForecastResult(
             put("etaMinutes", etaMinutes ?: JSONObject.NULL)
             put("state", state.name)
             put("intensityMmh", intensityMmh ?: JSONObject.NULL)
+            put("rainEndMinutes", rainEndMinutes ?: JSONObject.NULL)
         })
         put("blobs", JSONArray().apply {
             blobs.filter { it.isFinite() }.forEach { put(it.toJson()) }

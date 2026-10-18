@@ -6,31 +6,79 @@ import org.junit.Test
 
 class MotionEstimatorTest {
 
-    // A blob with no corresponding rain anywhere in the earlier frame — BlockMatcher.match will
-    // never clear MIN_CONFIDENCE, so this exercises the "no earlier frame matched" fallback.
-    private fun blobWithNoHistory(): Blob {
-        val cells = listOf(intArrayOf(2, 2), intArrayOf(2, 3), intArrayOf(3, 2), intArrayOf(3, 3))
-        return Blob(id = 0, cells = cells, centroidRow = 2.5, centroidCol = 2.5, sizeCells = cells.size, peakMmh = 1.0)
+    private val size = 160
+    private val kmPerCell = 0.705
+
+    /** Legend-index grid with rectangles (row, col, height, width) painted at index 10 (15 mm/h). */
+    private fun grid(vararg rects: IntArray): PresenceGrid {
+        val data = ByteArray(size * size) { 23 }
+        for (rect in rects) {
+            val (r0, c0, h, w) = rect
+            for (r in r0 until r0 + h) for (c in c0 until c0 + w) data[r * size + c] = 10
+        }
+        return PresenceGrid(size, size, data)
     }
 
-    private fun emptyGrid(): PresenceGrid = PresenceGrid(10, 10, ByteArray(100) { 23 })
+    private fun estimate(latest: PresenceGrid, vararg earlier: Pair<PresenceGrid, Long>): List<MotionEstimator.BlobMotion> {
+        val labels = IntArray(size * size) { -1 }
+        val blobs = ConnectedComponents.findBlobs(latest, 9, labels)
+        return MotionEstimator.estimate(
+            blobs = blobs,
+            labels = labels,
+            latest = LevelGrid.from(latest),
+            earlier = earlier.map { LevelGrid.from(it.first) },
+            minuteDeltas = earlier.map { it.second },
+            kmPerCell = kmPerCell,
+        )
+    }
 
     @Test
     fun `unmatched blob falls back to stationary motion instead of being dropped`() {
-        val blob = blobWithNoHistory()
-
-        val motions = MotionEstimator.estimate(
-            blobs = listOf(blob),
-            earlierGrids = listOf(emptyGrid()),
-            minuteDeltas = listOf(5L),
-        )
+        val motions = estimate(grid(intArrayOf(10, 10, 4, 4)), grid() to 5L)
 
         assertEquals(1, motions.size)
         val motion = motions[0]
         assertEquals(0.0, motion.vxCellsPerMin, 0.0)
         assertEquals(0.0, motion.vyCellsPerMin, 0.0)
-        assertEquals(0.0, motion.confidence, 0.0)
         assertEquals(0L, motion.trackedSpanMinutes)
         assertTrue(motion.matches.isEmpty())
+    }
+
+    @Test
+    fun `tracks a fast echo well beyond the old 34 kmh search cap`() {
+        // 7 cells east per 5 min ≈ 59 km/h, seen in three earlier frames.
+        val latest = grid(intArrayOf(70, 90, 12, 12))
+        val motion = estimate(
+            latest,
+            grid(intArrayOf(70, 83, 12, 12)) to 5L,
+            grid(intArrayOf(70, 76, 12, 12)) to 10L,
+            grid(intArrayOf(70, 69, 12, 12)) to 15L,
+        ).single()
+
+        assertEquals(7.0 / 5.0, motion.vxCellsPerMin, 1e-9)
+        assertEquals(0.0, motion.vyCellsPerMin, 1e-9)
+        assertEquals(15L, motion.trackedSpanMinutes)
+        assertTrue(motion.vxCellsPerMin * kmPerCell * 60 > 55)
+    }
+
+    @Test
+    fun `large blob is tracked through the coarse-to-fine path`() {
+        // Big enough that the exhaustive search budget is exceeded, moving 9 cells south-east.
+        val latest = grid(intArrayOf(60, 60, 60, 70))
+        val motion = estimate(latest, grid(intArrayOf(51, 51, 60, 70)) to 5L).single()
+
+        assertEquals(9.0 / 5.0, motion.vxCellsPerMin, 1e-9)
+        assertEquals(9.0 / 5.0, motion.vyCellsPerMin, 1e-9)
+    }
+
+    @Test
+    fun `blob sitting inside a wider earlier rain area is not dragged to the search corner`() {
+        // The old overlap score gave every shift inside the earlier area a perfect score and
+        // kept the first one tried — the top-left corner of the search window.
+        val latest = grid(intArrayOf(75, 75, 6, 6))
+        val motion = estimate(latest, grid(intArrayOf(40, 40, 80, 80)) to 5L).single()
+
+        assertEquals(0.0, motion.vxCellsPerMin, 1e-9)
+        assertEquals(0.0, motion.vyCellsPerMin, 1e-9)
     }
 }

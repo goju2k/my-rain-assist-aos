@@ -39,7 +39,7 @@ class WebLocationBridge(
                 return@launch
             }
 
-            val fix = locationProvider.getCurrentLocation()
+            val fix = locationProvider.getCurrentLocation(highAccuracy = true)
             Log.d(TAG, "requestLocation: resolved fix=$fix")
             if (fix == null) {
                 respondError(callbackId, POSITION_UNAVAILABLE, "location unavailable")

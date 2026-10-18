@@ -21,7 +21,11 @@ object ConnectedComponents {
         1 to -1, 1 to 0, 1 to 1,
     )
 
-    fun findBlobs(grid: PresenceGrid, minSizeCells: Int = 9): List<Blob> {
+    /**
+     * @param labels optional row-major output (size width*height, pre-filled by the caller, e.g.
+     *   with -1): every cell of a kept blob gets that blob's [Blob.id]; other cells are untouched.
+     */
+    fun findBlobs(grid: PresenceGrid, minSizeCells: Int = 9, labels: IntArray? = null): List<Blob> {
         val visited = Array(grid.height) { BooleanArray(grid.width) }
         val blobs = mutableListOf<Blob>()
         var nextId = 0
@@ -88,7 +92,9 @@ object ConnectedComponents {
                     val centroidRow = centroidCell[0].toDouble()
                     val centroidCol = centroidCell[1].toDouble()
                     val peakMmh = RadarLegend.mmhForIndex(minIndexSeen)
-                    blobs.add(Blob(nextId++, cells, centroidRow, centroidCol, cells.size, peakMmh))
+                    val id = nextId++
+                    if (labels != null) cells.forEach { labels[it[0] * grid.width + it[1]] = id }
+                    blobs.add(Blob(id, cells, centroidRow, centroidCol, cells.size, peakMmh))
                 }
             }
         }

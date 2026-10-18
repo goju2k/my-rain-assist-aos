@@ -15,17 +15,26 @@ object RadarPngDecoder {
         val height = bitmap.height
         val pixels = IntArray(width * height)
         bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        return decodePixels(pixels)
+    }
+
+    /** Pure-JVM half of [decode] (ARGB ints in, legend indices out) — shared with the backtest, which decodes PNGs without android.graphics. */
+    fun decodePixels(pixels: IntArray): ByteArray {
+        // The image only ever uses a few dozen distinct colors (legend + anti-aliased edges), so
+        // memoizing the nearest-color search turns ~2M 24-way searches into a hash lookup each.
+        val memo = HashMap<Int, Byte>()
         return ByteArray(pixels.size) { i ->
             val pixel = pixels[i]
-            val alpha = (pixel ushr 24) and 0xFF
-            if (alpha == 0) {
-                RadarLegend.NO_DATA_INDEX.toByte()
-            } else {
-                val r = (pixel ushr 16) and 0xFF
-                val g = (pixel ushr 8) and 0xFF
-                val b = pixel and 0xFF
-                RadarLegend.nearestIndex(r, g, b).toByte()
-            }
+            memo.getOrPut(pixel) { classify(pixel) }
         }
+    }
+
+    private fun classify(pixel: Int): Byte {
+        val alpha = (pixel ushr 24) and 0xFF
+        if (alpha == 0) return RadarLegend.NO_DATA_INDEX.toByte()
+        val r = (pixel ushr 16) and 0xFF
+        val g = (pixel ushr 8) and 0xFF
+        val b = pixel and 0xFF
+        return RadarLegend.nearestIndex(r, g, b).toByte()
     }
 }

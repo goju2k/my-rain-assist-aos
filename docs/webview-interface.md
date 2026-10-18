@@ -1,6 +1,6 @@
 # MyRainAssist WebView 인터페이스 규격
 
-`https://www.ribs.kr/rain-assist`가 Android 앱의 WebView 안에서 로드될 때 앱과 맺는 계약을 정의합니다. 이 페이지는 일반 브라우저에서도 단독으로 동작해야 하므로, 아래 내용은 **`?webview=true`로 접속했을 때만** 적용됩니다.
+`https://www.ribs.kr/rain-assist`가 Android 앱의 WebView 안에서 로드될 때 앱과 맺는 계약을 정의합니다. 이 페이지는 일반 브라우저에서도 단독으로 동작하지만(레이더/CCTV 확인), 예보 기능은 앱이 직접 계산해 브릿지로 주입하는 웹뷰 전용 기능입니다 — 아래 내용은 **`?webview=true`로 접속했을 때만** 적용됩니다.
 
 ## 1. 웹뷰 모드 감지
 
@@ -14,11 +14,11 @@ https://www.ribs.kr/rain-assist?webview=true
 
 **`webview=true`일 때 웹이 해야 할 일:**
 
-- 자체 레이더 수신·강수 예측 로직을 실행하지 않습니다. 예보 데이터는 전부 `window.RainAssistBridge.applyForecast(...)`로 앱이 주입합니다.
+- 강수 예측 로직을 실행하지 않습니다. 예보 데이터는 전부 `window.RainAssistBridge.applyForecast(...)`로 앱이 주입합니다.
 - 강수 관련 안내 문구(예: "20분 뒤 비가 옵니다")를 직접 생성하지 않습니다. `window.RainAssistBridge.showNotification(...)`으로 전달되는 `message`를 그대로 표시합니다. 앱과 웹이 각자 다른 튜닝 로직으로 문구를 따로 만들면 실제 OS 알림에 뜬 문구와 화면 문구가 어긋나는 문제가 있었고, 이를 없애는 것이 이번 변경의 목적입니다.
 - `navigator.geolocation`은 평소처럼 호출하면 됩니다 (아래 2번 참고 — 이미 네이티브로 라우팅됩니다). 별도 처리 불필요.
 
-일반 브라우저(쿼리스트링 없음)에서는 기존처럼 자체 로직으로 동작합니다.
+일반 브라우저(쿼리스트링 없음)에서는 예보 배지/화살표 자체가 렌더되지 않습니다 — 예보는 웹뷰(앱 임베드) 전용 기능이며, 일반 브라우저는 레이더 오버레이와 CCTV 확인 기능만 제공합니다.
 
 ## 2. 위치 — `navigator.geolocation` (기존 구현, 변경 없음)
 
@@ -71,7 +71,8 @@ window.RainAssistBridge = {
     "willArrive": true,
     "etaMinutes": 20,          // null이면 다가오는 비 없음
     "state": "INCOMING",       // "NONE" | "INCOMING" | "ACTIVE"
-    "intensityMmh": 6.0        // null 가능. state의 강수 강도 추정치(mm/h)
+    "intensityMmh": 6.0,       // null 가능. state의 강수 강도 추정치(mm/h)
+    "rainEndMinutes": null     // 신규(v2). ACTIVE일 때만: 몇 분 뒤 그칠지. null이면 비가 안 오거나 예보 범위(30분) 안에 안 그침
   },
   "blobs": [
     {
@@ -181,4 +182,4 @@ window.RainAssistBridge = {
 
 ## 5. 참고: 서버 사이드 변경 없음
 
-이 문서는 WebView 임베딩 시나리오만 다룹니다. `?webview=true`가 없는 일반 브라우저 접속은 기존 동작(자체 예측, 자체 문구 생성)을 그대로 유지해야 합니다.
+이 문서는 WebView 임베딩 시나리오만 다룹니다. `?webview=true`가 없는 일반 브라우저 접속은 예보 기능 없이 레이더/CCTV 확인만 제공합니다(예보는 웹뷰 전용).
