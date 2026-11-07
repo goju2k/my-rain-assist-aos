@@ -45,10 +45,22 @@ import com.goju.ribs.myrainassist.ui.PermissionOnboardingScreen
 import com.goju.ribs.myrainassist.ui.RainEventLogScreen
 import com.goju.ribs.myrainassist.ui.RainWebViewScreen
 import com.goju.ribs.myrainassist.ui.theme.MyRainAssistTheme
+import com.goju.ribs.myrainassist.update.AppUpdater
+import com.goju.ribs.myrainassist.update.BuildConfigVersion
+import com.goju.ribs.myrainassist.update.LatestApp
+import com.goju.ribs.myrainassist.update.UpdateDialog
+import com.goju.ribs.myrainassist.update.UpdateUi
 import com.goju.ribs.myrainassist.webview.WebBridge
+import java.io.File
 import kotlinx.coroutines.launch
 
 private const val KEY_FINE_LOCATION_ASKED = "fine_location_asked"
+private const val KEY_UPDATE_LATER_CODE = "update_later_code"
+private const val KEY_UPDATE_LATER_AT = "update_later_at"
+// "나중에" keeps that version quiet for a day; a newer one still prompts right away.
+private const val UPDATE_LATER_MS = 24L * 60 * 60 * 1000
+// latest.json is checked on each return to the foreground, at most this often.
+private const val UPDATE_CHECK_INTERVAL_MS = 60L * 60 * 1000
 
 private enum class OnboardingStep { NOTIFICATIONS, LOCATION, BACKGROUND_LOCATION, BATTERY_OPTIMIZATION }
 
@@ -69,6 +81,11 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var prefs: SharedPreferences
 
+    private var updateUi by mutableStateOf<UpdateUi>(UpdateUi.None)
+    private var lastUpdateCheckAt = 0L
+    // Downloaded APK waiting on the "install unknown apps" switch the user is sent to flip.
+    private var pendingApk: File? = null
+
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { advance() }
     // Requesting FINE alongside COARSE is what makes the system show the "precise location" toggle
@@ -82,15 +99,29 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { advance() }
     private val batteryOptimizationLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { advance() }
+    private val installPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            val apk = pendingApk
+            pendingApk = null
+            if (apk != null && AppUpdater.canInstall(this)) AppUpdater.launchInstaller(this, apk)
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         prefs = getSharedPreferences("onboarding_state", Context.MODE_PRIVATE)
         skipAlreadySatisfiedSteps()
+        // Anything still in the update folder belongs to an install that already went in (or was abandoned).
+        AppUpdater.clearDownloads(this)
 
         setContent {
             MyRainAssistTheme {
+                UpdateDialog(
+                    state = updateUi,
+                    currentVersionName = BuildConfigVersion.name(this),
+                    onUpdate = ::startUpdate,
+                    onLater = ::postponeUpdate,
+                )
                 val index = stepIndex
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     if (index >= ONBOARDING_STEPS.size) {
@@ -180,6 +211,7 @@ class MainActivity : ComponentActivity() {
                 // reality — e.g. rain already started or already stopped by the time the user opens
                 // the app, but the alert/ongoing text still reflects the last scheduled check.
                 RainMonitorService.requestImmediateCheck(this)
+                checkForUpdate()
                 wasStopped = false
             }
         }
@@ -193,6 +225,60 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+    }
+
+    private fun checkForUpdate() {
+        val now = System.currentTimeMillis()
+        if (updateUi != UpdateUi.None || now - lastUpdateCheckAt < UPDATE_CHECK_INTERVAL_MS) return
+        lastUpdateCheckAt = now
+        lifecycleScope.launch {
+            val latest = AppUpdater.fetchLatest() ?: return@launch
+            if (!AppUpdater.isNewer(latest, BuildConfigVersion.code(this@MainActivity))) return@launch
+            val postponed = prefs.getInt(KEY_UPDATE_LATER_CODE, -1) == latest.versionCode &&
+                System.currentTimeMillis() - prefs.getLong(KEY_UPDATE_LATER_AT, 0) < UPDATE_LATER_MS
+            if (!postponed && updateUi == UpdateUi.None) updateUi = UpdateUi.Available(latest)
+        }
+    }
+
+    private fun postponeUpdate() {
+        val latest = when (val ui = updateUi) {
+            is UpdateUi.Available -> ui.latest
+            is UpdateUi.Failed -> ui.latest
+            else -> null
+        }
+        if (latest != null) {
+            prefs.edit()
+                .putInt(KEY_UPDATE_LATER_CODE, latest.versionCode)
+                .putLong(KEY_UPDATE_LATER_AT, System.currentTimeMillis())
+                .apply()
+        }
+        updateUi = UpdateUi.None
+    }
+
+    private fun startUpdate(latest: LatestApp) {
+        updateUi = UpdateUi.Downloading(latest, 0f)
+        lifecycleScope.launch {
+            var shown = 0
+            val apk = AppUpdater.download(this@MainActivity, latest) { progress ->
+                // Recompose on whole percents only, not every 64KB chunk.
+                val percent = (progress * 100).toInt()
+                if (percent != shown) {
+                    shown = percent
+                    runOnUiThread { if (updateUi is UpdateUi.Downloading) updateUi = UpdateUi.Downloading(latest, progress) }
+                }
+            }
+            if (apk == null) {
+                updateUi = UpdateUi.Failed(latest)
+                return@launch
+            }
+            updateUi = UpdateUi.None
+            if (AppUpdater.canInstall(this@MainActivity)) {
+                AppUpdater.launchInstaller(this@MainActivity, apk)
+            } else {
+                pendingApk = apk
+                installPermissionLauncher.launch(AppUpdater.installPermissionSettingsIntent(this@MainActivity))
+            }
+        }
     }
 
     private fun skipAlreadySatisfiedSteps() {
