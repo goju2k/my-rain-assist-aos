@@ -174,15 +174,18 @@ object ForecastEngine {
         fun sourceCol(m: MotionEstimator.BlobMotion, t: Int) = userCol - m.vxCellsPerMin * (lagMinutes + t)
         fun coverAt(m: MotionEstimator.BlobMotion, t: Int) = scene.coverMmh(m.blob.id, sourceRow(m, t), sourceCol(m, t))
 
+        // How far ahead each blob may be extrapolated: weak far cells only count if already overhead.
+        fun lastForecastMinute(motion: MotionEstimator.BlobMotion) =
+            if (isWeakAndFar(motion.blob)) 0 else forecastHorizon(motion)
+
         val arrivals = motions.associateWith { motion ->
-            val blob = motion.blob
-            val horizon = if (blob.sizeCells >= LARGE_BLOB_MIN_CELLS) {
-                MAX_FORECAST_MINUTES
-            } else {
-                motion.trackedSpanMinutes.toInt().coerceIn(MIN_FORECAST_HORIZON_MINUTES, MAX_FORECAST_MINUTES)
-            }
-            val lastT = if (isWeakAndFar(blob)) 0 else horizon
-            (0..lastT).firstOrNull { t -> coverAt(motion, t) != null }
+            (0..lastForecastMinute(motion)).firstOrNull { t -> coverAt(motion, t) != null }
+        }
+
+        // The rain the user should get each minute from now: the heaviest of the blobs covering
+        // them then, under the same per-blob horizons as arrival (so it agrees with state/ETA).
+        val intensityByMinute = (0..MAX_FORECAST_MINUTES).map { t ->
+            motions.filter { t <= lastForecastMinute(it) }.mapNotNull { coverAt(it, t) }.maxOrNull() ?: 0.0
         }
 
         val arriving = arrivals.filterValues { it != null }
@@ -243,8 +246,16 @@ object ForecastEngine {
             frameCount = response.frames.size,
             lagMinutes = lagMinutes,
             rainEndMinutes = rainEndMinutes,
+            intensityByMinute = intensityByMinute,
         )
     }
+
+    private fun forecastHorizon(motion: MotionEstimator.BlobMotion): Int =
+        if (motion.blob.sizeCells >= LARGE_BLOB_MIN_CELLS) {
+            MAX_FORECAST_MINUTES
+        } else {
+            motion.trackedSpanMinutes.toInt().coerceIn(MIN_FORECAST_HORIZON_MINUTES, MAX_FORECAST_MINUTES)
+        }
 
     /** 0 stays 0 ("now"); anything later rounds to the nearest 5 minutes but never down to 0. */
     private fun roundEta(minutes: Int): Int =
@@ -376,11 +387,7 @@ object ForecastEngine {
         val speedKmh = haversineKm(centroidAtTm, tenMinutesOn) * 6.0
         val headingDeg = bearingDeg(eastKm = eastKm, northKm = northKm)
 
-        val horizonMinutes = if (blob.sizeCells >= LARGE_BLOB_MIN_CELLS) {
-            MAX_FORECAST_MINUTES
-        } else {
-            motion.trackedSpanMinutes.toInt().coerceIn(MIN_FORECAST_HORIZON_MINUTES, MAX_FORECAST_MINUTES)
-        }
+        val horizonMinutes = forecastHorizon(motion)
 
         // Real observed track (negative minutesFromNow), one point per earlier frame that actually
         // matched — each from its own match's displacement, so this is the blob's true past path,
