@@ -19,7 +19,7 @@ app/src/main/java/com/goju/ribs/myrainassist/
   webview/
     RainWebViewClient.kt           ribs.kr 도메인만 인앱 로드, 외부는 브라우저로
     RainWebChromeClient.kt         WebView 지오로케이션 프롬프트 처리
-    WebBridge.kt                   requestDrawRainPathVector 호출 (★ 인터페이스 규격은 6장 참고)
+    WebBridge.kt                   window.RainAssistBridge 호출 (★ 규격은 docs/webview-interface.md)
 
   data/
     LatLon.kt                      위경도 + haversine/bearing 계산
@@ -29,11 +29,13 @@ app/src/main/java/com/goju/ribs/myrainassist/
     RadarPngDecoder.kt             프레임 PNG → 강수 유무 바이트 그리드 디코딩
 
   geo/
-    QuadMapper.kt                  위경도 ↔ 격자 좌표 변환 (bilinear + Newton's method 역변환)
+    QuadMapper.kt                  위경도 ↔ 격자 좌표 변환 (기상청 범위의 LCC 사각형, 4.2절)
+    LambertConformalConic.kt       LCC 투영 (WGS84 타원체)
 
   analysis/
     PresenceGrid.kt                바이트 배열 → 강수 유무 판정
     ConnectedComponents.kt         강수 blob(구름 덩어리) 탐지
+    CloudPeaks.kt                  지도 화살표 시작점 — 진한 덩어리 중심 찾기 (4.7절)
     MotionEstimator.kt             blob 이동 속도 추정 (강도 기반 TREC, 최대 100km/h)
     ForecastEngine.kt              사용자 주변 150km만 분석, 역추적 방식 도달/그침 예측 + 결과 조립
     RainForecastResult.kt          결과 모델 + JSON 직렬화
@@ -203,19 +205,21 @@ GET https://d8dfs01bak16j.cloudfront.net/rain-assist/current.json
 단순화했다. 이 때문에 `ConnectedComponents`의 centroid 가중치(`255 - byte`)는 이제 모든 강수
 셀에서 값이 같아(항상 255) 사실상 단순 평균과 동일하게 동작한다.
 
-### 4.2 위경도 ↔ 격자 좌표 변환 (`QuadMapper.kt`)
+### 4.2 위경도 ↔ 격자 좌표 변환 (`QuadMapper.kt`, `LambertConformalConic.kt`)
 
-`corners`는 축 정렬 사각형이 아니라 기울어진 사각형(quad)이다. 관측된 좌표 순서로 보아
-`corners[0]=남서, [1]=북서, [2]=북동, [3]=남동` (0→1→2→3 반시계)으로 가정하고 bilinear
-매핑을 사용한다.
+1453px 전국 합성 레이더 이미지는 기상청 지도의 LCC 투영(`+proj=lcc +lat_1=30 +lat_2=60 +lat_0=0
++lon_0=126 +datum=WGS84`)에서 축 정렬 정사각형이다. 위경도로 보면 꼭짓점이 기울어진 사각형처럼
+보이는 것은 투영 때문이다. 그래서 위경도 → LCC 미터 → 사각형 안의 비율(u,v)로 바로 바꾼다(정방향·
+역방향 모두 닫힌 식, 반복 계산 없음).
 
-- **정방향** (격자 u,v → 위경도): 표준 bilinear interpolation
-- **역방향** (위경도 → 격자 u,v): Newton's method, 8회 반복. 수렴 실패 시 `null` 반환 (해당
-  주기 예측 스킵)
-
-> ⚠️ **corner 순서 가정은 검증이 필요하다.** 좌표값 추론일 뿐, 실제 웹 지도 렌더링과 대조
-> 확인된 적은 없다. 알려진 도시 좌표를 `inverseMap`에 넣어 나온 위치가 실제 웹 지도상 위치와
-> 방향이 맞는지 1회 수동 검증을 권장한다.
+- 범위는 기상청 지도가 선언한 값(`kmap.bb.js`의 `mapInfo["radar.extent"]`)을 쓴다:
+  `QuadMapper.KMA_COMPOSITE`. 웹 오버레이(ribs-home `rain/util/radarGrid.ts`의 `RADAR_MOSAIC_BOX`)와
+  같은 값이라 앱이 읽는 위치와 지도에 그려진 이미지가 맞는다.
+- 서버가 보내는 `corners`는 쓰지 않는다. 2026-10-18 전까지는 가장자리마다 2~5km 안쪽인 근사값이라
+  위치가 5~6km 어긋났다(지금은 서버도 같은 범위로 바꿈).
+- 격자의 세로축은 경도 126°에서만 정북이고, 그 밖에서는 약 0.72 × (경도 − 126)°만큼 돌아가 있다
+  (부산·강릉 ≈ 2°). 도착 판정은 격자 위에서 하므로 상관없지만, 지도에 그리는 경로는 격자 위에서
+  옮긴 뒤 위경도로 바꿔야 한다(4.7절).
 
 ### 4.3 강수 blob 탐지 (`ConnectedComponents.kt`)
 
@@ -310,6 +314,24 @@ IDLE ──(도달 예측 발생)──▶ WATCHING ──(비구름이 5km 밖�
   뜨는 번복처럼 보이는 문제가 있었다. `RainEventLog`에는 `MISSED`로 계속 기록되어 디버그 화면
   (`RainEventLogScreen`)에서는 확인 가능하다.
 
+### 4.7 지도 화살표 (`ForecastEngine.displayBlobs`, `CloudPeaks.kt`)
+
+예보 blob(0.1mm/h 이상이 이어진 영역)은 넓은 비에서 수백 km짜리 하나가 되므로, 지도에는 따로
+"사람이 보기에 구름 하나"마다 화살표를 하나씩 그린다.
+
+- **시작점 = 진한 덩어리의 중심**: 범례 단계(눈에 보이는 색 단계)를 두 크기로 흐리게 한 차이
+  (σ 6셀 ≈ 4km − σ 20셀 ≈ 14km, difference of Gaussians)의 극대점. 주변보다 진한 곳에만 반응하고,
+  넓고 고른 영역에는 반응하지 않는다. 1mm/h 이상인 셀 위에서만, 서로 35셀(≈25km) 넘게 떨어진
+  것만 고르고, 사용자에게서 80km 떨어지면 절반으로 쳐서 최대 15개를 그린다.
+  - 2026-11-07 전에는 1mm/h 이상이 이어진 영역마다 하나씩, 강도 가중 평균을 가장 가까운 셀에
+    붙인 점에서 시작했다. 넓은 비에서는 영역이 하나로 이어져 화살표가 하나뿐이었고, 그 점이
+    띠 사이 옅은 곳에 떨어지는 일이 많았다(분석 범위 경계에 걸린 영역은 잘린 조각의 중심).
+- **이동**: 그 셀이 속한 예보 blob의 속도. 경로 점은 격자 위에서 옮긴 뒤 위경도로 바꾼다(4.2절의
+  격자 회전 때문 — 전에는 격자 x를 동쪽으로 보고 옮겨 30분 경로 끝이 부산에서 ~1km 옆으로 갔다).
+- **강조(`isForecastTarget`)**: 그 구름의 영역(같은 blob의 1mm/h 이상 셀 중 극대점에서 35셀 안,
+  이웃 구름과는 가까운 쪽으로 나눔)이 내 위치에 닿을 때만. 닿는 구름이 하나도 없으면(대개 띠의
+  옅은 앞쪽) 실제로 도착할 지점에서 화살표 하나를 따로 그린다.
+
 ---
 
 ## 5. 서비스 ↔ UI 통신
@@ -337,8 +359,8 @@ webView.evaluateJavascript("requestDrawRainPathVector(${json})", null)
 
 **호출 주기**: 서비스 poll 주기(~5.5분)마다, WebView가 화면에 떠 있을 때만 호출된다.
 
-> ⚠️ **웹 페이지 쪽에 `requestDrawRainPathVector` 함수는 아직 구현되어 있지 않다** (배포된 JS
-> 번들 전체를 검색해서 확인함). 아래는 안드로이드가 호출하는 데이터 계약이며, 웹 쪽에서 이
+> ⚠️ (당시 기록) **웹 페이지 쪽에 `requestDrawRainPathVector` 함수는 아직 구현되어 있지 않았다** (배포된 JS
+> 번들 전체를 검색해서 확인함). 지금 웹은 `window.RainAssistBridge`를 구현했다. 아래는 안드로이드가 호출하는 데이터 계약이며, 웹 쪽에서 이
 > 함수를 정의해 지도 위에 렌더링해야 한다. 함수가 없어도 안드로이드 쪽 호출 자체는 에러 없이
 > 무시된다 (JS 콘솔에러만 발생, 앱에는 영향 없음).
 
@@ -386,8 +408,8 @@ function requestDrawRainPathVector(payload) {
 |---|---|---|
 | `generatedAtEpochMs` | number | 이 예측이 계산된 시각 (epoch ms) |
 | `userLocation.lat/lon` | number | 계산에 사용된 사용자 위치 |
-| `forecast.willArrive` | boolean | 60분 내 도달 예측 존재 여부 (`etaMinutes != null`) |
-| `forecast.etaMinutes` | number \| null | 도달까지 남은 분 (10분 단위 반올림), 이미 오는 중이면 `0`, 예측 없으면 `null` |
+| `forecast.willArrive` | boolean | 30분 내 도달 예측 존재 여부 (`etaMinutes != null`) |
+| `forecast.etaMinutes` | number \| null | 도달까지 남은 분 (5분 단위 반올림, 최소 5), 이미 오는 중이면 `0`, 예측 없으면 `null` |
 | `forecast.state` | `"NONE"` \| `"INCOMING"` \| `"ACTIVE"` | `NONE`=예측 없음, `INCOMING`=다가오는 중, `ACTIVE`=사용자 위치에 현재 강수 |
 | `blobs[]` | array | 현재 탐지된 강수 blob 목록 (이동 속도를 추정할 수 있었던 blob만 포함) |
 | `blobs[].id` | string | blob 식별자 (poll 주기마다 재계산되므로 프레임 간 동일 blob 추적 불가 — 매 주기 새로 그리는 용도) |
@@ -395,7 +417,7 @@ function requestDrawRainPathVector(payload) {
 | `blobs[].centroid.lat/lon` | number | blob 현재 중심 위경도 |
 | `blobs[].headingDeg` | number | 이동 방향 (0=북, 90=동, compass bearing) |
 | `blobs[].speedKmh` | number | 이동 속도 (km/h) |
-| `blobs[].path[]` | array | 0, 15, 30, 45, 60분 후 예상 위치 (직선 외삽). 화살표/폴리라인 렌더링에 사용 |
+| `blobs[].path[]` | array | 과거 실측 위치(음수 분) + 0, 15, 30분 후 예상 위치. 자세한 규칙은 `docs/webview-interface.md` 3.1 |
 | `blobs[].path[].minutesFromNow` | number | 몇 분 후 위치인지 |
 
 ### 6.4 유효성 관련 참고사항
@@ -455,9 +477,6 @@ minSdk 31이라 레거시 래스터 아이콘(mipmap의 `.webp`)은 실제로는
 
 ## 9. 알려진 한계 / 후속 과제
 
-- corner 순서 가정(4.2절) 실측 검증 필요 — 웹 쪽 `requestDrawRainPathVector` 구현 후 실제
-  렌더링과 대조 권장
-- 웹 페이지(`ribs.kr/rain-assist`)에 `requestDrawRainPathVector` 함수 구현 필요 (6장 스키마 참고)
 - 알림 상태바 아이콘이 OS/제조사 정책에 따라 항상 보장되지는 않음 (알림창 내림은 항상 정확)
 - OEM(Xiaomi/Huawei/Samsung 등)의 자체 백그라운드 킬 정책은 AOSP API로 해결 불가 — 필요 시
   제조사별 "자동 실행 허용" 설정 화면으로 안내하는 기능 추가 검토 가능
