@@ -50,6 +50,10 @@ app/src/main/java/com/goju/ribs/myrainassist/
     NotificationHelper.kt          알림 채널/문구 관리
     CycleLog.kt                    사이클마다 1줄 기록 (files/cycles.jsonl) — 백그라운드 실행 공백 확인용
 
+  update/
+    AppUpdater.kt                  앱 안 업데이트 — latest.json 확인, APK 받기·sha256 검사, 설치 화면 (11장)
+    UpdateDialog.kt                업데이트 안내/진행률 창
+
   debug/
     DebugOverrides.kt              디버그 빌드 전용 위치 덮어쓰기 (src/debug의 DebugCommandReceiver가 설정)
 
@@ -520,3 +524,25 @@ adb shell run-as com.goju.ribs.myrainassist cat files/rain_events.jsonl # 알림
 ```
 
 위치 덮어쓰기는 WebView 지도 위치에도 적용된다. 설치는 `adb install -r -t`로 데이터 유지.
+
+---
+
+## 11. 배포와 앱 안 업데이트
+
+앱은 스토어가 아니라 S3의 APK로 나눠 준다. 웹 `/rain-assist`의 "Android 앱 받기" 버튼과 앱 안 업데이트가
+같은 파일을 본다.
+
+- 위치: `https://d8dfs01bak16j.cloudfront.net/rain-assist/app/`
+  - `raining-now-v<버전>.apk` (한 번 올린 파일은 바꾸지 않는다 — 캐시 immutable)
+  - `latest.json` — `{ versionName, versionCode, file, sizeBytes, sha256, uploadedAt }`, 캐시 60초
+- 배포 순서: `app/build.gradle.kts`의 `appVersionName`/`appVersionCode`를 올리고 → 배포 키로
+  `assembleRelease` → APK를 올린 뒤 `latest.json`을 마지막에 바꾼다.
+- 배포 키는 저장소에 없다(`keystore.properties`, gitignore). 0.4부터 새 키 — 0.3 이하(옛 키)는 덮어 설치가
+  안 되어 지우고 새로 깔아야 한다. 키를 잃으면 모든 사용자가 다시 지우고 깔아야 하니 백업해 둔다.
+- 앱 동작(`AppUpdater`, `MainActivity.checkForUpdate`): 앱이 다시 화면에 나올 때 최대 1시간에 한 번
+  `latest.json`을 읽고, `versionCode`가 더 크면 안내 창을 띄운다. "업데이트" → 캐시에 받으며 sha256 검사 →
+  "출처를 알 수 없는 앱 설치"가 꺼져 있으면 그 설정 화면으로 보냈다가 돌아오면 설치 화면을 연다.
+  설치 확인은 안드로이드 규칙상 사용자가 누른다. "나중에"는 그 버전을 하루 동안 묻지 않는다.
+- 업데이트 후 프로세스가 죽으면 `BootReceiver`(MY_PACKAGE_REPLACED)가 감시 서비스를 다시 띄운다.
+- 실기기 확인(2026-11-07): updater를 넣은 versionCode 3 시험 빌드에서 운영 `latest.json`(0.4)을 받아
+  안내 → 다운로드 → 설치 허용 → 설치까지 정상.
