@@ -50,6 +50,7 @@ import com.goju.ribs.myrainassist.update.BuildConfigVersion
 import com.goju.ribs.myrainassist.update.LatestApp
 import com.goju.ribs.myrainassist.update.UpdateDialog
 import com.goju.ribs.myrainassist.update.UpdateUi
+import com.goju.ribs.myrainassist.webview.NativeUiBridge
 import com.goju.ribs.myrainassist.webview.WebBridge
 import java.io.File
 import kotlinx.coroutines.launch
@@ -82,6 +83,13 @@ class MainActivity : ComponentActivity() {
     private lateinit var prefs: SharedPreferences
 
     private var updateUi by mutableStateOf<UpdateUi>(UpdateUi.None)
+    private var showEventLog by mutableStateOf(false)
+    // The page draws its own 기록 button when it says so (NativeUiBridge); until then, the app's overlay one.
+    private var webOwnsEventLogButton by mutableStateOf(false)
+    private val nativeUiBridge = NativeUiBridge(
+        onOpenEventLog = { showEventLog = true },
+        onWebOwnsEventLogButton = { webOwnsEventLogButton = it },
+    )
     private var lastUpdateCheckAt = 0L
     // Downloaded APK waiting on the "install unknown apps" switch the user is sent to flip.
     private var pendingApk: File? = null
@@ -125,12 +133,12 @@ class MainActivity : ComponentActivity() {
                 val index = stepIndex
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     if (index >= ONBOARDING_STEPS.size) {
-                        var showEventLog by remember { mutableStateOf(false) }
                         var eventLogRefreshKey by remember { mutableIntStateOf(0) }
                         BackHandler(enabled = showEventLog) { showEventLog = false }
                         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                             RainWebViewScreen(
                                 onWebViewCreated = { webView = it },
+                                nativeUiBridge = nativeUiBridge,
                                 modifier = Modifier.fillMaxSize(),
                             )
                             if (showEventLog) {
@@ -146,7 +154,7 @@ class MainActivity : ComponentActivity() {
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }
-                            } else {
+                            } else if (!webOwnsEventLogButton) {
                                 Surface(
                                     onClick = { showEventLog = true },
                                     modifier = Modifier.align(Alignment.BottomStart).padding(16.dp),

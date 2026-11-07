@@ -79,6 +79,26 @@ class ForecastEngineTest {
     }
 
     @Test
+    fun `the per-minute series is dry until the band arrives and agrees with the ETA`() {
+        // Same band as above: the leading edge reaches the user 6 minutes from now.
+        val frames = tms.mapIndexed { i, tm -> frame(tm, rowOffset = -100, colOffset = -74 - 5 * (3 - i), height = 200, width = 60) }
+
+        val series = forecast(frames).intensityByMinute
+
+        assertEquals(31, series.size)
+        val firstWet = series.indexOfFirst { it > 0.0 }
+        assertEquals(6, firstWet)
+        assertEquals(15.0, series[firstWet], 0.0)
+        assertEquals(15.0, series.last(), 0.0)
+    }
+
+    @Test
+    fun `no rain anywhere gives an all-dry series`() {
+        val frames = tms.map { frame(it, rowOffset = -1, colOffset = 3, height = 3, width = 3) }
+        assertEquals(List(31) { 0.0 }, forecast(frames).intensityByMinute)
+    }
+
+    @Test
     fun `rain end is predicted from the trailing edge`() {
         // Same band, but the user is already inside it, 10 cells from its trailing (west) edge.
         val frames = tms.mapIndexed { i, tm -> frame(tm, rowOffset = -100, colOffset = -10 - 8 - 5 * (3 - i), height = 200, width = 60) }

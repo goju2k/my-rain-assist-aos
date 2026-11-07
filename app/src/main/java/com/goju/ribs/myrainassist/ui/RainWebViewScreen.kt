@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import com.goju.ribs.myrainassist.location.LocationFixProvider
+import com.goju.ribs.myrainassist.webview.NativeUiBridge
 import com.goju.ribs.myrainassist.webview.RainWebChromeClient
 import com.goju.ribs.myrainassist.webview.RainWebViewClient
 import com.goju.ribs.myrainassist.webview.WebLocationBridge
@@ -21,7 +22,7 @@ private const val RAIN_URL = "https://www.ribs.kr/rain-assist?webview=true"
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun RainWebViewScreen(onWebViewCreated: (WebView) -> Unit, modifier: Modifier = Modifier) {
+fun RainWebViewScreen(onWebViewCreated: (WebView) -> Unit, nativeUiBridge: NativeUiBridge, modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val isDebuggable = (LocalContext.current.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     if (isDebuggable) {
@@ -41,6 +42,7 @@ fun RainWebViewScreen(onWebViewCreated: (WebView) -> Unit, modifier: Modifier = 
                     WebLocationBridge(context, scope, locationProvider) { this },
                     WebLocationBridge.INTERFACE_NAME,
                 )
+                addJavascriptInterface(nativeUiBridge, NativeUiBridge.INTERFACE_NAME)
                 webViewClient = RainWebViewClient(context)
                 webChromeClient = RainWebChromeClient(context)
                 loadUrl(RAIN_URL)

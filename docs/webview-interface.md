@@ -72,7 +72,8 @@ window.RainAssistBridge = {
     "etaMinutes": 20,          // null이면 다가오는 비 없음
     "state": "INCOMING",       // "NONE" | "INCOMING" | "ACTIVE"
     "intensityMmh": 6.0,       // null 가능. state의 강수 강도 추정치(mm/h)
-    "rainEndMinutes": null     // 신규(v2). ACTIVE일 때만: 몇 분 뒤 그칠지. null이면 비가 안 오거나 예보 범위(30분) 안에 안 그침
+    "rainEndMinutes": null,    // 신규(v2). ACTIVE일 때만: 몇 분 뒤 그칠지. null이면 비가 안 오거나 예보 범위(30분) 안에 안 그침
+    "intensityByMinute": [0, 0, 0, 0.5, 1, 1, 3, 5, 5, ...] // 신규(0.6). 내 위치의 분별 예상 강수(mm/h, 0=비 없음), 인덱스=지금부터 분, 0~30 (31개). 0.5 이하 앱은 키 없음
   },
   "blobs": [
     {
@@ -184,6 +185,17 @@ window.RainAssistBridge = {
 | 알림 발생 시 | `applyForecast` → `showNotification` (같은 주기 내 순서 보장) |
 | 앱 포그라운드 복귀 | `refreshPosition` (위치 마커 **+ 레이더 이미지 레이어** 갱신) → (구독 재개로) `applyForecast` 마지막 값 재전송 |
 
-## 5. 참고: 서버 사이드 변경 없음
+## 5. 웹 → 네이티브: `window.RainAssistNative` (0.6~)
+
+앱 0.6부터 페이지가 앱 UI를 부를 수 있는 인터페이스를 넣어 둡니다. 0.5 이하 앱에는 없으니 반드시 존재 여부를 확인하고 씁니다.
+
+| 메서드 | 설명 |
+| --- | --- |
+| `openEventLog()` | 앱의 알림 기록 화면을 엽니다 (페이지의 "기록" 버튼). |
+| `setWebOwnsEventLogButton(owns)` | `true`면 페이지가 "기록" 버튼을 직접 그린다는 뜻 — 앱은 지도 위에 띄우던 자체 "기록" 버튼을 숨깁니다(페이지의 하단 시트를 가리지 않도록). |
+
+페이지는 마운트 때 `RainAssistNative`가 있으면 `setWebOwnsEventLogButton(true)`를 부르고 자체 버튼을 그립니다. 없으면(구버전 앱) 앱 버튼 자리를 비워 둡니다.
+
+## 6. 참고: 서버 사이드 변경 없음
 
 이 문서는 WebView 임베딩 시나리오만 다룹니다. `?webview=true`가 없는 일반 브라우저 접속은 예보 기능 없이 레이더/CCTV 확인만 제공합니다(예보는 웹뷰 전용).
