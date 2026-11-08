@@ -86,6 +86,8 @@ class MainActivity : ComponentActivity() {
     private var showEventLog by mutableStateOf(false)
     // The page draws its own 기록 button when it says so (NativeUiBridge); until then, the app's overlay one.
     private var webOwnsEventLogButton by mutableStateOf(false)
+    // The page has something to go back to (an open sheet/viewer pushed a history entry) — back closes that first.
+    private var webCanGoBack by mutableStateOf(false)
     private val nativeUiBridge = NativeUiBridge(
         onOpenEventLog = { showEventLog = true },
         onWebOwnsEventLogButton = { webOwnsEventLogButton = it },
@@ -135,10 +137,12 @@ class MainActivity : ComponentActivity() {
                     if (index >= ONBOARDING_STEPS.size) {
                         var eventLogRefreshKey by remember { mutableIntStateOf(0) }
                         BackHandler(enabled = showEventLog) { showEventLog = false }
+                        BackHandler(enabled = !showEventLog && webCanGoBack) { webView?.goBack() }
                         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                             RainWebViewScreen(
                                 onWebViewCreated = { webView = it },
                                 nativeUiBridge = nativeUiBridge,
+                                onCanGoBackChanged = { webCanGoBack = it },
                                 modifier = Modifier.fillMaxSize(),
                             )
                             if (showEventLog) {

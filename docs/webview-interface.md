@@ -196,6 +196,10 @@ window.RainAssistBridge = {
 
 페이지는 마운트 때 `RainAssistNative`가 있으면 `setWebOwnsEventLogButton(true)`를 부르고 자체 버튼을 그립니다. 없으면(구버전 앱) 앱 버튼 자리를 비워 둡니다.
 
+### 5.1 뒤로 가기 (0.7~)
+
+페이지가 시트·영상 창처럼 "뒤로 가기로 닫혀야 하는" 것을 열면 `history.pushState`로 기록을 한 칸 쌓고, `popstate`가 오면 닫습니다(화면에서 직접 닫으면 그 칸을 `history.back()`으로 되돌림). 앱은 웹뷰에 돌아갈 기록이 있으면(`WebView.canGoBack()`) 안드로이드 뒤로 가기를 `goBack()`으로 넘기고, 없을 때만 앱을 나갑니다. 0.6 이하 앱은 뒤로 가기가 바로 앱을 나갑니다.
+
 ## 6. 참고: 서버 사이드 변경 없음
 
 이 문서는 WebView 임베딩 시나리오만 다룹니다. `?webview=true`가 없는 일반 브라우저 접속은 예보 기능 없이 레이더/CCTV 확인만 제공합니다(예보는 웹뷰 전용).

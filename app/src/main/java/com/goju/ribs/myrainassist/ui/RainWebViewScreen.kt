@@ -22,7 +22,12 @@ private const val RAIN_URL = "https://www.ribs.kr/rain-assist?webview=true"
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun RainWebViewScreen(onWebViewCreated: (WebView) -> Unit, nativeUiBridge: NativeUiBridge, modifier: Modifier = Modifier) {
+fun RainWebViewScreen(
+    onWebViewCreated: (WebView) -> Unit,
+    nativeUiBridge: NativeUiBridge,
+    onCanGoBackChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val scope = rememberCoroutineScope()
     val isDebuggable = (LocalContext.current.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     if (isDebuggable) {
@@ -43,7 +48,7 @@ fun RainWebViewScreen(onWebViewCreated: (WebView) -> Unit, nativeUiBridge: Nativ
                     WebLocationBridge.INTERFACE_NAME,
                 )
                 addJavascriptInterface(nativeUiBridge, NativeUiBridge.INTERFACE_NAME)
-                webViewClient = RainWebViewClient(context)
+                webViewClient = RainWebViewClient(context, onCanGoBackChanged)
                 webChromeClient = RainWebChromeClient(context)
                 loadUrl(RAIN_URL)
                 onWebViewCreated(this)

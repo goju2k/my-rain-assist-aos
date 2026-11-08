@@ -8,8 +8,8 @@ plugins {
 
 // Bump by 0.1 (and versionCode by 1) each time a build is handed out — see the APK renaming
 // block below, which names every output "raining-now-v<appVersionName>.apk" from this.
-val appVersionName = "0.6"
-val appVersionCode = 6
+val appVersionName = "0.7"
+val appVersionCode = 7
 
 // Loaded from a gitignored properties file (see keystore.properties.example) rather than
 // hardcoded, so the release signing key and its password never end up in version control.

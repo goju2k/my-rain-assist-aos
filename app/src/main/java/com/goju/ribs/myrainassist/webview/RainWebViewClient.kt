@@ -12,7 +12,17 @@ import com.goju.ribs.myrainassist.service.NotificationEventBus
 import com.goju.ribs.myrainassist.service.RainForecastBus
 
 /** Keeps navigation inside the app for the ribs.kr origin; anything else opens in an external browser. */
-class RainWebViewClient(private val context: Context) : WebViewClient() {
+class RainWebViewClient(
+    private val context: Context,
+    // Whether the page has history to go back to — e.g. the page pushed an entry for an open sheet
+    // or CCTV viewer (docs/webview-interface.md 5.1), so the back key should close that, not the app.
+    private val onCanGoBackChanged: (Boolean) -> Unit = {},
+) : WebViewClient() {
+
+    override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+        super.doUpdateVisitedHistory(view, url, isReload)
+        onCanGoBackChanged(view.canGoBack())
+    }
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val uri = request.url
