@@ -529,8 +529,8 @@ adb shell run-as com.goju.ribs.myrainassist cat files/rain_events.jsonl # 알림
 
 ## 11. 배포와 앱 안 업데이트
 
-앱은 스토어가 아니라 S3의 APK로 나눠 준다. 웹 `/rain-assist`의 "Android 앱 받기" 버튼과 앱 안 업데이트가
-같은 파일을 본다.
+앱은 스토어가 아니라 S3의 APK로 나눠 준다. 다운로드 페이지 https://www.ribs.kr/raining-now (검색 비노출)와
+앱 안 업데이트가 같은 `latest.json`을 본다.
 
 - 위치: `https://d8dfs01bak16j.cloudfront.net/rain-assist/app/`
   - `raining-now-v<버전>.apk` (한 번 올린 파일은 바꾸지 않는다 — 캐시 immutable)
