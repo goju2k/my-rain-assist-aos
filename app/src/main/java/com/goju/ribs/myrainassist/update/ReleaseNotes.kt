@@ -11,6 +11,13 @@ object ReleaseNotes {
 
     val ENTRIES: List<Entry> = listOf(
         Entry(
+            versionCode = 9,
+            versionName = "0.9",
+            lines = listOf(
+                "알림 창 디자인을 새로 다듬었어요.",
+            ),
+        ),
+        Entry(
             versionCode = 8,
             versionName = "0.8",
             lines = listOf(
