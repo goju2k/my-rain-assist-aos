@@ -48,8 +48,10 @@ import com.goju.ribs.myrainassist.ui.theme.MyRainAssistTheme
 import com.goju.ribs.myrainassist.update.AppUpdater
 import com.goju.ribs.myrainassist.update.BuildConfigVersion
 import com.goju.ribs.myrainassist.update.LatestApp
+import com.goju.ribs.myrainassist.update.ReleaseNotes
 import com.goju.ribs.myrainassist.update.UpdateDialog
 import com.goju.ribs.myrainassist.update.UpdateUi
+import com.goju.ribs.myrainassist.update.WhatsNewDialog
 import com.goju.ribs.myrainassist.webview.NativeUiBridge
 import com.goju.ribs.myrainassist.webview.WebBridge
 import java.io.File
@@ -58,6 +60,7 @@ import kotlinx.coroutines.launch
 private const val KEY_FINE_LOCATION_ASKED = "fine_location_asked"
 private const val KEY_UPDATE_LATER_CODE = "update_later_code"
 private const val KEY_UPDATE_LATER_AT = "update_later_at"
+private const val KEY_LAST_SEEN_VERSION_CODE = "last_seen_version_code"
 // "나중에" keeps that version quiet for a day; a newer one still prompts right away.
 private const val UPDATE_LATER_MS = 24L * 60 * 60 * 1000
 // latest.json is checked on each return to the foreground, at most this often.
@@ -83,6 +86,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var prefs: SharedPreferences
 
     private var updateUi by mutableStateOf<UpdateUi>(UpdateUi.None)
+    // Release notes to show once after an update (empty = nothing to show).
+    private var whatsNew by mutableStateOf<List<ReleaseNotes.Entry>>(emptyList())
     private var showEventLog by mutableStateOf(false)
     // The page draws its own 기록 button when it says so (NativeUiBridge); until then, the app's overlay one.
     private var webOwnsEventLogButton by mutableStateOf(false)
@@ -123,6 +128,7 @@ class MainActivity : ComponentActivity() {
         skipAlreadySatisfiedSteps()
         // Anything still in the update folder belongs to an install that already went in (or was abandoned).
         AppUpdater.clearDownloads(this)
+        checkWhatsNew()
 
         setContent {
             MyRainAssistTheme {
@@ -133,6 +139,10 @@ class MainActivity : ComponentActivity() {
                     onLater = ::postponeUpdate,
                 )
                 val index = stepIndex
+                // After onboarding and never on top of an update prompt.
+                if (index >= ONBOARDING_STEPS.size && updateUi == UpdateUi.None) {
+                    WhatsNewDialog(entries = whatsNew, onDismiss = ::dismissWhatsNew)
+                }
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     if (index >= ONBOARDING_STEPS.size) {
                         var eventLogRefreshKey by remember { mutableIntStateOf(0) }
@@ -250,6 +260,31 @@ class MainActivity : ComponentActivity() {
                 System.currentTimeMillis() - prefs.getLong(KEY_UPDATE_LATER_AT, 0) < UPDATE_LATER_MS
             if (!postponed && updateUi == UpdateUi.None) updateUi = UpdateUi.Available(latest)
         }
+    }
+
+    /**
+     * Release notes for the versions since the one the user last opened. Installs from before this
+     * existed have no record: an install that has been updated (lastUpdateTime after
+     * firstInstallTime) shows this version's notes, a fresh install shows nothing.
+     */
+    private fun checkWhatsNew() {
+        val current = BuildConfigVersion.code(this)
+        var lastSeen = prefs.getLong(KEY_LAST_SEEN_VERSION_CODE, -1L)
+        if (lastSeen < 0) {
+            val info = packageManager.getPackageInfo(packageName, 0)
+            lastSeen = if (info.lastUpdateTime > info.firstInstallTime) current - 1 else current
+        }
+        whatsNew = ReleaseNotes.since(lastSeen, current)
+        if (whatsNew.isEmpty()) markWhatsNewSeen(current)
+    }
+
+    private fun dismissWhatsNew() {
+        markWhatsNewSeen(BuildConfigVersion.code(this))
+        whatsNew = emptyList()
+    }
+
+    private fun markWhatsNewSeen(code: Long) {
+        prefs.edit().putLong(KEY_LAST_SEEN_VERSION_CODE, code).apply()
     }
 
     private fun postponeUpdate() {
