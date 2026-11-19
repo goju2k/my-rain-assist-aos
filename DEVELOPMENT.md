@@ -541,6 +541,8 @@ adb shell run-as com.goju.ribs.myrainassist cat files/rain_events.jsonl # 알림
   업데이트 안내 창이 없을 때) 마지막으로 연 버전 이후의 `ReleaseNotes` 항목을 한 번 보여 준다. 기록이 없는
   옛 설치는 `lastUpdateTime > firstInstallTime`이면 이번 버전 것만, 새로 깐 설치는 보여 주지 않는다.
   항목이 없는 버전은 아무것도 안 뜬다.
+- 앱 색(0.9~, `ui/theme`): 배경화면을 따르는 dynamic color를 끄고 브랜드 파랑(#1f6feb, 웹 지도 강조색)으로
+  고정한다. dynamic color에서는 폰에 따라 창이 흐린 회색으로 나왔다.
 - 배포 키는 저장소에 없다(`keystore.properties`, gitignore). 0.4부터 새 키 — 0.3 이하(옛 키)는 덮어 설치가
   안 되어 지우고 새로 깔아야 한다. 키를 잃으면 모든 사용자가 다시 지우고 깔아야 하니 백업해 둔다.
 - 앱 동작(`AppUpdater`, `MainActivity.checkForUpdate`): 앱이 다시 화면에 나올 때 최대 1시간에 한 번
