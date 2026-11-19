@@ -15,6 +15,8 @@ import com.goju.ribs.myrainassist.analysis.ForecastEngine
 import com.goju.ribs.myrainassist.analysis.ForecastState
 import com.goju.ribs.myrainassist.analysis.NotificationDedup
 import com.goju.ribs.myrainassist.data.RadarRepository
+import com.goju.ribs.myrainassist.data.KmaTemperature
+import com.goju.ribs.myrainassist.data.PrecipKind
 import com.goju.ribs.myrainassist.location.LocationFixProvider
 import com.goju.ribs.myrainassist.notification.CycleLog
 import com.goju.ribs.myrainassist.notification.LastCycleDebug
@@ -206,6 +208,15 @@ class RainMonitorService : Service() {
 
         val signal = NotificationDedup.Signal(result.etaMinutes, result.intensityMmh)
         val action = notificationDedup.evaluate(signal)
+        // 비 or 눈 in the wording, from the forecast temperature here. Only looked up when there's
+        // something to word (cached ~20 min anyway); unknown → 비.
+        val celsius = if (result.state != ForecastState.NONE || action != NotificationDedup.Action.None) {
+            KmaTemperature.celsiusAt(location)
+        } else {
+            null
+        }
+        val kind = PrecipKind.forCelsius(celsius)
+        log.put("tempC", celsius ?: JSONObject.NULL)
         if (action != NotificationDedup.Action.None) {
             val frameDebug = dedupBefore
                 .put("latestFrameTm", result.latestFrameTm)
@@ -220,19 +231,20 @@ class RainMonitorService : Service() {
                 .put("locationCached", locationFix.cached)
                 .put("locationAgeMs", locationFix.ageMs)
                 .put("source", fetch.source)
+                .put("temperatureC", celsius ?: JSONObject.NULL)
             val notified: Pair<String, String>? = when (action) {
                 is NotificationDedup.Action.NotifyIncoming -> {
-                    val message = NotificationHelper.showIncomingRainAlert(this, action.etaMinutes, result.intensityMmh)
+                    val message = NotificationHelper.showIncomingRainAlert(this, action.etaMinutes, result.intensityMmh, kind)
                     RainEventLog.append(this, "INCOMING", message, frameDebug)
                     "INCOMING" to message
                 }
                 NotificationDedup.Action.NotifyActiveRain -> {
-                    val message = NotificationHelper.showActiveRainAlert(this, result.intensityMmh)
+                    val message = NotificationHelper.showActiveRainAlert(this, result.intensityMmh, kind)
                     RainEventLog.append(this, "ACTIVE", message, frameDebug)
                     "ACTIVE" to message
                 }
                 NotificationDedup.Action.NotifyRainStopped -> {
-                    val message = NotificationHelper.showRainStoppedAlert(this)
+                    val message = NotificationHelper.showRainStoppedAlert(this, kind)
                     RainEventLog.append(this, "STOPPED", message, frameDebug)
                     "STOPPED" to message
                 }
@@ -242,7 +254,7 @@ class RainMonitorService : Service() {
                     // hear about this, though: it only ever reflects the last showNotification it
                     // was given, so without a push here it would keep showing the stale INCOMING
                     // message indefinitely even though the app itself has already moved on.
-                    RainEventLog.append(this, "MISSED", "비가 오지 않고 지나갔어요 (알림 없이 초기화)", frameDebug)
+                    RainEventLog.append(this, "MISSED", "${kind.subject} 오지 않고 지나갔어요 (알림 없이 초기화)", frameDebug)
                     "IDLE" to NotificationHelper.DEFAULT_ONGOING_TEXT
                 }
                 NotificationDedup.Action.None -> null
@@ -268,7 +280,7 @@ class RainMonitorService : Service() {
         // Refresh the ongoing notification text right away so it tracks the phase that was just
         // computed, rather than waiting for the next loop iteration's pre-cycle re-assert.
         val justStopped = action == NotificationDedup.Action.NotifyRainStopped
-        ongoingContentText = NotificationHelper.ongoingTextFor(result.state, justStopped, result.etaMinutes, result.intensityMmh, result.rainEndMinutes)
+        ongoingContentText = NotificationHelper.ongoingTextFor(result.state, justStopped, result.etaMinutes, result.intensityMmh, result.rainEndMinutes, kind)
         startOngoingForeground()
 
         val rainNearby = result.nearestRainDistanceKm != null || result.state != ForecastState.NONE

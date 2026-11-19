@@ -535,8 +535,12 @@ adb shell run-as com.goju.ribs.myrainassist cat files/rain_events.jsonl # 알림
 - 위치: `https://d8dfs01bak16j.cloudfront.net/rain-assist/app/`
   - `raining-now-v<버전>.apk` (한 번 올린 파일은 바꾸지 않는다 — 캐시 immutable)
   - `latest.json` — `{ versionName, versionCode, file, sizeBytes, sha256, uploadedAt }`, 캐시 60초
-- 배포 순서: `app/build.gradle.kts`의 `appVersionName`/`appVersionCode`를 올리고 → 배포 키로
-  `assembleRelease` → APK를 올린 뒤 `latest.json`을 마지막에 바꾼다.
+- 배포 순서: `app/build.gradle.kts`의 `appVersionName`/`appVersionCode`를 올리고 → `update/ReleaseNotes.kt`에
+  그 버전의 바뀐 점을 적고 → 배포 키로 `assembleRelease` → APK를 올린 뒤 `latest.json`을 마지막에 바꾼다.
+- 업데이트 내역(0.8~, `WhatsNewDialog`, `MainActivity.checkWhatsNew`): 업데이트 뒤 처음 열 때(온보딩이 끝났고
+  업데이트 안내 창이 없을 때) 마지막으로 연 버전 이후의 `ReleaseNotes` 항목을 한 번 보여 준다. 기록이 없는
+  옛 설치는 `lastUpdateTime > firstInstallTime`이면 이번 버전 것만, 새로 깐 설치는 보여 주지 않는다.
+  항목이 없는 버전은 아무것도 안 뜬다.
 - 배포 키는 저장소에 없다(`keystore.properties`, gitignore). 0.4부터 새 키 — 0.3 이하(옛 키)는 덮어 설치가
   안 되어 지우고 새로 깔아야 한다. 키를 잃으면 모든 사용자가 다시 지우고 깔아야 하니 백업해 둔다.
 - 앱 동작(`AppUpdater`, `MainActivity.checkForUpdate`): 앱이 다시 화면에 나올 때 최대 1시간에 한 번

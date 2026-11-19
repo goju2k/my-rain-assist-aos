@@ -80,10 +80,13 @@ object RadarLegend {
     }
 
     /** Adjective to prepend to "비" in a notification, e.g. "강한 비가 옵니다". "보통" reads as filler in Korean, so it's omitted. */
-    fun intensityPrefix(mmh: Double?): String = when {
+    fun intensityPrefix(mmh: Double?): String = intensityPrefix(mmh, PrecipKind.RAIN)
+
+    /** Same buckets for 눈, where "강한 눈" reads oddly — heavy snow is "많은 눈". */
+    fun intensityPrefix(mmh: Double?, kind: PrecipKind): String = when {
         mmh == null -> ""
-        mmh >= 30.0 -> "매우 강한 "
-        mmh >= 15.0 -> "강한 "
+        mmh >= 30.0 -> if (kind == PrecipKind.SNOW) "아주 많은 " else "매우 강한 "
+        mmh >= 15.0 -> if (kind == PrecipKind.SNOW) "많은 " else "강한 "
         mmh < 3.0 -> "약한 "
         else -> ""
     }

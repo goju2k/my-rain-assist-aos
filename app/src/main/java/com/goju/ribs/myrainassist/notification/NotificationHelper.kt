@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import com.goju.ribs.myrainassist.MainActivity
 import com.goju.ribs.myrainassist.R
 import com.goju.ribs.myrainassist.analysis.ForecastState
+import com.goju.ribs.myrainassist.data.PrecipKind
 import com.goju.ribs.myrainassist.data.RadarLegend
 
 object NotificationHelper {
@@ -70,7 +71,7 @@ object NotificationHelper {
      * [showIncomingRainAlert]'s wording (same phrase builder) so
      * the always-on ongoing notification never reads vaguer than the alert that was just shown for
      * the same state — they used to drift apart (e.g. "비가 곧 올 것 같아요" here vs "20분 뒤 비가
-     * 옵니다" in the alert).
+     * 옵니다" in the alert). [kind] swaps 비 for 눈 when the forecast temperature says it'll be snow.
      */
     fun ongoingTextFor(
         state: ForecastState,
@@ -78,13 +79,14 @@ object NotificationHelper {
         etaMinutes: Int?,
         intensityMmh: Double? = null,
         rainEndMinutes: Int? = null,
+        kind: PrecipKind = PrecipKind.RAIN,
     ): String = if (justStopped) {
-        "비가 그쳤어요"
+        "${kind.subject} 그쳤어요"
     } else {
         when (state) {
-            ForecastState.ACTIVE -> "${RadarLegend.intensityPrefix(intensityMmh)}비가 오고 있어요" +
+            ForecastState.ACTIVE -> "${RadarLegend.intensityPrefix(intensityMmh, kind)}${kind.subject} 오고 있어요" +
                 (rainEndMinutes?.let { " · ${roundUpToFive(it)}분 뒤쯤 그칠 것 같아요" } ?: "")
-            ForecastState.INCOMING -> etaMinutes?.let { incomingRainText(it, intensityMmh) } ?: DEFAULT_ONGOING_TEXT
+            ForecastState.INCOMING -> etaMinutes?.let { incomingRainText(it, intensityMmh, kind) } ?: DEFAULT_ONGOING_TEXT
             ForecastState.NONE -> DEFAULT_ONGOING_TEXT
         }
     }
@@ -95,7 +97,7 @@ object NotificationHelper {
     // last ~15 minutes of frames), so the wording should read as a guess rather than a prediction.
     private const val UNCERTAIN_ETA_THRESHOLD_MINUTES = 60
 
-    private fun incomingRainText(etaMinutes: Int, intensityMmh: Double?): String {
+    private fun incomingRainText(etaMinutes: Int, intensityMmh: Double?, kind: PrecipKind): String {
         val hours = etaMinutes / 60
         val minutes = etaMinutes % 60
         val timePhrase = when {
@@ -103,30 +105,30 @@ object NotificationHelper {
             minutes == 0 -> "${hours}시간 뒤"
             else -> "${hours}시간 ${minutes}분 뒤"
         }
-        val prefix = RadarLegend.intensityPrefix(intensityMmh)
+        val prefix = RadarLegend.intensityPrefix(intensityMmh, kind)
         return if (etaMinutes > UNCERTAIN_ETA_THRESHOLD_MINUTES) {
-            "${timePhrase}쯤 ${prefix}비가 올 것 같아요"
+            "${timePhrase}쯤 $prefix${kind.subject} 올 것 같아요"
         } else {
-            "$timePhrase ${prefix}비가 옵니다"
+            "$timePhrase $prefix${kind.subject} 옵니다"
         }
     }
 
-    fun showIncomingRainAlert(context: Context, etaMinutes: Int, intensityMmh: Double? = null): String {
-        val text = incomingRainText(etaMinutes, intensityMmh)
-        show(context, "비 소식", text)
+    fun showIncomingRainAlert(context: Context, etaMinutes: Int, intensityMmh: Double? = null, kind: PrecipKind = PrecipKind.RAIN): String {
+        val text = incomingRainText(etaMinutes, intensityMmh, kind)
+        show(context, "${kind.noun} 소식", text)
         return text
     }
 
-    fun showActiveRainAlert(context: Context, intensityMmh: Double? = null): String {
-        val prefix = RadarLegend.intensityPrefix(intensityMmh)
-        val text = "지금 ${prefix}비가 오고 있어요"
-        show(context, "비 소식", text)
+    fun showActiveRainAlert(context: Context, intensityMmh: Double? = null, kind: PrecipKind = PrecipKind.RAIN): String {
+        val prefix = RadarLegend.intensityPrefix(intensityMmh, kind)
+        val text = "지금 $prefix${kind.subject} 오고 있어요"
+        show(context, "${kind.noun} 소식", text)
         return text
     }
 
-    fun showRainStoppedAlert(context: Context): String {
-        val text = "비가 그쳤어요"
-        show(context, "비 소식", text)
+    fun showRainStoppedAlert(context: Context, kind: PrecipKind = PrecipKind.RAIN): String {
+        val text = "${kind.subject} 그쳤어요"
+        show(context, "${kind.noun} 소식", text)
         return text
     }
 
