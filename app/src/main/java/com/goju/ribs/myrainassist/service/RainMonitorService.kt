@@ -15,6 +15,7 @@ import com.goju.ribs.myrainassist.analysis.ForecastEngine
 import com.goju.ribs.myrainassist.analysis.ForecastState
 import com.goju.ribs.myrainassist.analysis.NotificationDedup
 import com.goju.ribs.myrainassist.data.RadarRepository
+import com.goju.ribs.myrainassist.data.RainHistoryStore
 import com.goju.ribs.myrainassist.data.KmaTemperature
 import com.goju.ribs.myrainassist.data.PrecipKind
 import com.goju.ribs.myrainassist.location.LocationFixProvider
@@ -269,6 +270,16 @@ class RainMonitorService : Service() {
             }
             log.put("notify", action.javaClass.simpleName)
         }
+
+        // User-facing history (기록 screen): one entry per spell of rain/snow here.
+        RainHistoryStore.record(
+            this,
+            nowMs = System.currentTimeMillis(),
+            active = result.state == ForecastState.ACTIVE,
+            stopped = action == NotificationDedup.Action.NotifyRainStopped,
+            missed = action == NotificationDedup.Action.ResetToIdle,
+            snow = kind == PrecipKind.SNOW,
+        )
 
         // "비가 그쳤어요" is news for a while, then just stale: the ongoing notification already
         // went back to the idle text on the next cycle, so move the WebView badge back too.

@@ -35,14 +35,13 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import com.goju.ribs.myrainassist.notification.LastCycleDebug
-import com.goju.ribs.myrainassist.notification.RainEventLog
 import com.goju.ribs.myrainassist.service.NotificationEventBus
 import com.goju.ribs.myrainassist.service.RainForecastBus
 import com.goju.ribs.myrainassist.service.RainMonitorService
 import com.goju.ribs.myrainassist.ui.OnboardingStepInfo
 import com.goju.ribs.myrainassist.ui.PermissionOnboardingScreen
-import com.goju.ribs.myrainassist.ui.RainEventLogScreen
+import com.goju.ribs.myrainassist.data.RainHistoryStore
+import com.goju.ribs.myrainassist.ui.RainHistoryScreen
 import com.goju.ribs.myrainassist.ui.RainWebViewScreen
 import com.goju.ribs.myrainassist.ui.theme.MyRainAssistTheme
 import com.goju.ribs.myrainassist.update.AppUpdater
@@ -145,7 +144,6 @@ class MainActivity : ComponentActivity() {
                 }
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     if (index >= ONBOARDING_STEPS.size) {
-                        var eventLogRefreshKey by remember { mutableIntStateOf(0) }
                         BackHandler(enabled = showEventLog) { showEventLog = false }
                         BackHandler(enabled = !showEventLog && webCanGoBack) { webView?.goBack() }
                         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
@@ -157,14 +155,10 @@ class MainActivity : ComponentActivity() {
                             )
                             if (showEventLog) {
                                 Surface(modifier = Modifier.fillMaxSize()) {
-                                    RainEventLogScreen(
-                                        entries = remember(showEventLog, eventLogRefreshKey) { RainEventLog.readAll(this@MainActivity) },
-                                        lastCycle = remember(showEventLog, eventLogRefreshKey) { LastCycleDebug.read(this@MainActivity) },
+                                    RainHistoryScreen(
+                                        episodes = remember(showEventLog) { RainHistoryStore.read(this@MainActivity) },
+                                        nowMs = remember(showEventLog) { System.currentTimeMillis() },
                                         onBack = { showEventLog = false },
-                                        onClear = {
-                                            RainEventLog.clear(this@MainActivity)
-                                            eventLogRefreshKey++
-                                        },
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }

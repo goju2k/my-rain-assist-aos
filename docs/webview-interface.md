@@ -152,7 +152,7 @@ window.RainAssistBridge = {
 > INCOMING 예보 후 실제로는 비가 오지 않고 지나간 경우("예보 취소")는 사용자에게 알릴 만큼
 > 유익하지 않다고 판단해 OS 알림은 띄우지 않는다. 다만 화면 문구는 그대로 두면 안 되므로 —
 > 그대로 두면 이미 지나간 INCOMING 문구("N분 뒤 비가 옵니다")가 웹에 계속 남아있게 된다 —
-> 네이티브가 `IDLE` 상태(`message: "주변 비구름을 감지하고 있어요"`)로 `showNotification`을
+> 네이티브가 `IDLE` 상태(`message: "주변 구름을 감지하고 있어요"`)로 `showNotification`을
 > 호출해 초기 문구로 되돌린다. 마찬가지로 `STOPPED`("비가 그쳤어요")는 30분이 지나면 `IDLE`로
 > 되돌린다(페이지를 새로 열 때도 30분 넘은 `STOPPED`는 다시 보여주지 않는다). 이 두 경우는
 > OS 알림 없이 `showNotification`만 온다.
@@ -162,7 +162,7 @@ window.RainAssistBridge = {
 실제 첫 알림은 다음 비가 올 때까지, 심지어 안 올 수도 있어 언제 도착할지 알 수 없습니다. 그래서 **페이지 로드가 끝나는 즉시(`onPageFinished`)** 앱이 `showNotification`을 한 번 호출해서 문구 표시 영역이 흰 화면으로 비어있지 않도록 합니다:
 
 ```jsonc
-{ "state": "IDLE", "message": "주변 비구름을 감지하고 있어요", "etaMinutes": null, "intensityMmh": null, "timestampEpochMs": 1783497113036 }
+{ "state": "IDLE", "message": "주변 구름을 감지하고 있어요", "etaMinutes": null, "intensityMmh": null, "timestampEpochMs": 1783497113036 }
 ```
 
 실제 알림이 뜨면 동일한 `showNotification` 경로로 이 기본 문구를 덮어씁니다. `IDLE`을 별도 상태로 구분해두었으니, 알림 이력에 남기거나 다른 스타일(예: 회색 톤)을 주고 싶다면 그렇게 하셔도 됩니다.
