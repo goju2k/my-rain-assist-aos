@@ -6,10 +6,11 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// Bump by 0.1 (and versionCode by 1) each time a build is handed out — see the APK renaming
-// block below, which names every output "raining-now-v<appVersionName>.apk" from this.
-val appVersionName = "0.9"
-val appVersionCode = 9
+// Bump the minor (0.10.0 → 0.11.0) and versionCode by 1 each time a build is handed out; 0.9 and
+// earlier were "0.N". The major stays 0 for now. Updates compare versionCode only. See the APK
+// renaming block below, which names every output "raining-now-v<appVersionName>.apk" from this.
+val appVersionName = "0.10.0"
+val appVersionCode = 10
 
 // Loaded from a gitignored properties file (see keystore.properties.example) rather than
 // hardcoded, so the release signing key and its password never end up in version control.

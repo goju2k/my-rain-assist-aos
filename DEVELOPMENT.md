@@ -122,7 +122,7 @@ Android 15+에서 24시간당 6시간 누적 실행 제한이 있어 "상시 실
 
 | 채널 | 중요도 | 용도 |
 |---|---|---|
-| `rain_monitor_ongoing_v3` | DEFAULT (소리/진동 명시적으로 끔) | "비올까? / 주변 비구름을 감지하고 있어요" 상시 알림 |
+| `rain_monitor_ongoing_v3` | DEFAULT (소리/진동 명시적으로 끔) | "비올까? / 주변 구름을 감지하고 있어요" 상시 알림 |
 | `rain_monitor_alert` | HIGH | 강수 도달/그침 알림 |
 
 채널 중요도는 한번 생성되면 코드로 변경되지 않는 Android 특성이 있어, 중요도를 바꿀 때마다
@@ -519,8 +519,8 @@ adb shell am broadcast -n com.goju.ribs.myrainassist/.debug.DebugCommandReceiver
     -a com.goju.ribs.myrainassist.debug.SET_LOCATION --es lat 36.25 --es lon 127.85
 ... -a com.goju.ribs.myrainassist.debug.CLEAR_LOCATION
 ... -a com.goju.ribs.myrainassist.debug.CHECK_NOW
-adb shell run-as com.goju.ribs.myrainassist cat files/cycles.jsonl     # 사이클 기록
-adb shell run-as com.goju.ribs.myrainassist cat files/rain_events.jsonl # 알림 이벤트
+adb shell cat /sdcard/Android/data/com.goju.ribs.myrainassist/files/debug/cycles.jsonl     # 사이클 기록
+adb shell cat /sdcard/Android/data/com.goju.ribs.myrainassist/files/debug/rain_events.jsonl # 알림 이벤트
 ```
 
 위치 덮어쓰기는 WebView 지도 위치에도 적용된다. 설치는 `adb install -r -t`로 데이터 유지.
@@ -535,12 +535,18 @@ adb shell run-as com.goju.ribs.myrainassist cat files/rain_events.jsonl # 알림
 - 위치: `https://d8dfs01bak16j.cloudfront.net/rain-assist/app/`
   - `raining-now-v<버전>.apk` (한 번 올린 파일은 바꾸지 않는다 — 캐시 immutable)
   - `latest.json` — `{ versionName, versionCode, file, sizeBytes, sha256, uploadedAt }`, 캐시 60초
+- 버전: 0.10.0부터 `0.<minor>.<patch>` — 배포마다 minor와 `appVersionCode`를 1씩 올린다(0.9 이하는 `0.N`).
+  메이저는 아직 0. 앱 안 업데이트는 `versionCode`만 비교한다.
 - 배포 순서: `app/build.gradle.kts`의 `appVersionName`/`appVersionCode`를 올리고 → `update/ReleaseNotes.kt`에
   그 버전의 바뀐 점을 적고 → 배포 키로 `assembleRelease` → APK를 올린 뒤 `latest.json`을 마지막에 바꾼다.
 - 업데이트 내역(0.8~, `WhatsNewDialog`, `MainActivity.checkWhatsNew`): 업데이트 뒤 처음 열 때(온보딩이 끝났고
   업데이트 안내 창이 없을 때) 마지막으로 연 버전 이후의 `ReleaseNotes` 항목을 한 번 보여 준다. 기록이 없는
   옛 설치는 `lastUpdateTime > firstInstallTime`이면 이번 버전 것만, 새로 깐 설치는 보여 주지 않는다.
   항목이 없는 버전은 아무것도 안 뜬다.
+- 기록 화면(0.10.0~, `ui/RainHistoryScreen`, `data/RainHistory.kt`): 내 위치에 비·눈이 온 구간을 30일 보관해
+  보여 준다. 서비스가 사이클마다 `RainHistoryStore.record`(ACTIVE면 열고/늘리고, 그쳤어요 알림에서 닫고, 예보가
+  빗나가면 '오지 않음' 한 줄). 확인이 20분 끊긴 구간은 마지막 확인 시각에서 닫는다. 옛 알림 기록 화면은 없앴고
+  알림·사이클 기록은 디버그용으로 저장만 한다(10장 adb 명령).
 - 앱 색(0.9~, `ui/theme`): 배경화면을 따르는 dynamic color를 끄고 브랜드 파랑(#1f6feb, 웹 지도 강조색)으로
   고정한다. dynamic color에서는 폰에 따라 창이 흐린 회색으로 나왔다.
 - 배포 키는 저장소에 없다(`keystore.properties`, gitignore). 0.4부터 새 키 — 0.3 이하(옛 키)는 덮어 설치가

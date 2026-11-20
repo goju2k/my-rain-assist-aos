@@ -50,7 +50,7 @@ object NotificationHelper {
         )
     }
 
-    const val DEFAULT_ONGOING_TEXT = "주변 비구름을 감지하고 있어요"
+    const val DEFAULT_ONGOING_TEXT = "주변 구름을 감지하고 있어요"
 
     fun buildOngoingNotification(context: Context, contentText: String = DEFAULT_ONGOING_TEXT): Notification {
         return NotificationCompat.Builder(context, ONGOING_CHANNEL_ID)

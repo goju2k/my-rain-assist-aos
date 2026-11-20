@@ -11,6 +11,14 @@ object ReleaseNotes {
 
     val ENTRIES: List<Entry> = listOf(
         Entry(
+            versionCode = 10,
+            versionName = "0.10.0",
+            lines = listOf(
+                "'기록'에서 최근 30일 동안 내 위치에 비·눈이 온 시간을 볼 수 있어요.",
+                "비 소식이 없을 때 알림 문구를 '주변 구름을 감지하고 있어요'로 바꿨어요.",
+            ),
+        ),
+        Entry(
             versionCode = 9,
             versionName = "0.9",
             lines = listOf(

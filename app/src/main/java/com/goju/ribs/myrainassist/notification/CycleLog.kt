@@ -9,7 +9,7 @@ import java.io.File
  * [RainEventLog] which only records state changes. Its timestamps are what show whether the
  * background schedule actually held up — e.g. gaps while the phone sat in Doze — and each line
  * says what the cycle cost (download source/bytes, compute time) and what it concluded.
- * Read it with `adb shell run-as com.goju.ribs.myrainassist cat files/cycles.jsonl`.
+ * Read it with `adb pull /sdcard/Android/data/com.goju.ribs.myrainassist/files/debug/cycles.jsonl` (see [DebugFiles]).
  */
 object CycleLog {
 
@@ -18,7 +18,7 @@ object CycleLog {
 
     @Synchronized
     fun append(context: Context, entry: JSONObject) {
-        val file = File(context.filesDir, FILE_NAME)
+        val file = DebugFiles.file(context, FILE_NAME)
         val lines = (if (file.exists()) file.readLines().filter { it.isNotBlank() } else emptyList()).toMutableList()
         lines.add(entry.put("timestampEpochMs", System.currentTimeMillis()).toString())
         while (lines.size > MAX_ENTRIES) lines.removeAt(0)

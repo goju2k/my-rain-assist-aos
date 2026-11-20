@@ -14,8 +14,9 @@ data class RainEventLogEntry(
 )
 
 /**
- * Persists a bounded history of rain notification events to a JSON-lines file in app-private
- * storage, so they can be reviewed later even though the background service can't be watched live.
+ * Persists a bounded history of rain notification events to a JSON-lines file in the debug folder
+ * ([DebugFiles], readable with adb), so they can be reviewed later even though the background
+ * service can't be watched live. Debug only — the app no longer shows it.
  */
 object RainEventLog {
 
@@ -30,7 +31,7 @@ object RainEventLog {
             .put("message", message)
         if (debug != null) entry.put("debug", debug)
 
-        val file = File(context.filesDir, FILE_NAME)
+        val file = DebugFiles.file(context, FILE_NAME)
         val lines = (if (file.exists()) file.readLines() else emptyList()).toMutableList()
         lines.add(entry.toString())
         while (lines.size > MAX_ENTRIES) lines.removeAt(0)
@@ -39,7 +40,7 @@ object RainEventLog {
 
     @Synchronized
     fun clear(context: Context) {
-        File(context.filesDir, FILE_NAME).delete()
+        DebugFiles.file(context, FILE_NAME).delete()
     }
 
     // MISSED (an INCOMING forecast that fizzled — see RainMonitorService's ResetToIdle handling)
@@ -76,7 +77,7 @@ object RainEventLog {
 
     @Synchronized
     fun readAll(context: Context): List<RainEventLogEntry> {
-        val file = File(context.filesDir, FILE_NAME)
+        val file = DebugFiles.file(context, FILE_NAME)
         if (!file.exists()) return emptyList()
         return file.readLines()
             .mapNotNull { line ->
