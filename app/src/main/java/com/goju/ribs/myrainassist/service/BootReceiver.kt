@@ -7,11 +7,18 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.goju.ribs.myrainassist.brief.DailyBriefScheduler
 
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == Intent.ACTION_TIME_CHANGED || intent.action == Intent.ACTION_TIMEZONE_CHANGED) {
+            // The daily brief is booked at a wall-clock time; re-book it for the new clock.
+            DailyBriefScheduler.schedule(context)
+            return
+        }
         if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+        DailyBriefScheduler.schedule(context)
 
         val hasCoarseLocation = ContextCompat.checkSelfPermission(
             context,

@@ -195,6 +195,7 @@ window.RainAssistBridge = {
 | --- | --- |
 | `openEventLog()` | 앱의 알림 기록 화면을 엽니다 (페이지의 "기록" 버튼). |
 | `setWebOwnsEventLogButton(owns)` | `true`면 페이지가 "기록" 버튼을 직접 그린다는 뜻 — 앱은 지도 위에 띄우던 자체 "기록" 버튼을 숨깁니다(페이지의 하단 시트를 가리지 않도록). |
+| `openSettings()` | (다음 버전~) 앱의 설정 화면(매일 날씨 알림)을 엽니다 (페이지의 톱니 버튼). 페이지는 `typeof RainAssistNative.openSettings === 'function'`일 때만 톱니를 그립니다. |
 
 페이지는 마운트 때 `RainAssistNative`가 있으면 `setWebOwnsEventLogButton(true)`를 부르고 자체 버튼을 그립니다. 없으면(구버전 앱) 앱 버튼 자리를 비워 둡니다.
 

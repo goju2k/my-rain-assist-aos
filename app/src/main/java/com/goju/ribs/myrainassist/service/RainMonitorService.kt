@@ -14,6 +14,8 @@ import androidx.core.content.ContextCompat
 import com.goju.ribs.myrainassist.analysis.ForecastEngine
 import com.goju.ribs.myrainassist.analysis.ForecastState
 import com.goju.ribs.myrainassist.analysis.NotificationDedup
+import com.goju.ribs.myrainassist.brief.DailyBriefScheduler
+import com.goju.ribs.myrainassist.brief.DailyBriefText
 import com.goju.ribs.myrainassist.data.RadarRepository
 import com.goju.ribs.myrainassist.data.RainHistoryStore
 import com.goju.ribs.myrainassist.data.KmaTemperature
@@ -50,6 +52,7 @@ class RainMonitorService : Service() {
     private lateinit var locationProvider: LocationFixProvider
     private lateinit var notificationDedup: NotificationDedup
     private lateinit var wakeLock: PowerManager.WakeLock
+    private lateinit var briefWakeLock: PowerManager.WakeLock
     private val radarRepository = RadarRepository()
     private var ongoingContentText: String = NotificationHelper.DEFAULT_ONGOING_TEXT
 
@@ -67,6 +70,9 @@ class RainMonitorService : Service() {
         wakeLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MyRainAssist:cycle")
             .apply { setReferenceCounted(false) }
+        briefWakeLock = getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MyRainAssist:brief")
+            .apply { setReferenceCounted(false) }
 
         if (!startOngoingForeground()) {
             stopSelf()
@@ -76,6 +82,9 @@ class RainMonitorService : Service() {
         if (pollingJob == null) {
             pollingJob = scope.launch { pollLoop() }
         }
+        // Book (or re-book) the daily brief whenever the service comes up — covers a fresh install or
+        // update that never saw BOOT_COMPLETED / MY_PACKAGE_REPLACED.
+        DailyBriefScheduler.schedule(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -89,6 +98,7 @@ class RainMonitorService : Service() {
                 cycleTrigger.trySend("alarm")
             }
             ACTION_CHECK_NOW -> cycleTrigger.trySend("foreground")
+            ACTION_DAILY_BRIEF -> runDailyBrief()
         }
         return START_STICKY
     }
@@ -139,6 +149,35 @@ class RainMonitorService : Service() {
             if (wakeLock.isHeld) wakeLock.release()
             // Normally the alarm wakes us; the timeout is only a backup in case it never fires.
             trigger = withTimeoutOrNull(outcome.nextIntervalMs + BACKUP_SLACK_MS) { cycleTrigger.receive() } ?: "timer"
+        }
+    }
+
+    /**
+     * 매일 날씨 알림: one look at the current conditions here (location → radar forecast →
+     * temperature), sent as its own notification, then tomorrow's is booked. Whatever couldn't be
+     * fetched is simply worded as unknown.
+     */
+    private fun runDailyBrief() {
+        briefWakeLock.acquire(WAKE_LOCK_TIMEOUT_MS)
+        scope.launch {
+            try {
+                val fix = locationProvider.getCurrentLocation()
+                val result = fix?.let { f ->
+                    runCatching { radarRepository.fetch(f.location) }.getOrNull()
+                        ?.let { ForecastEngine.computeForecast(it.response, f.location, System.currentTimeMillis()) }
+                }
+                val celsius = fix?.let { KmaTemperature.celsiusAt(it.location) }
+                val kind = PrecipKind.forCelsius(celsius)
+                val title = DailyBriefText.title(celsius)
+                val body = DailyBriefText.body(result, kind)
+                NotificationHelper.showDailyBrief(this@RainMonitorService, title, body)
+                RainEventLog.append(this@RainMonitorService, "BRIEF", "$title / $body")
+            } catch (e: Exception) {
+                Log.w(TAG, "daily brief failed", e)
+            } finally {
+                DailyBriefScheduler.schedule(this@RainMonitorService)
+                briefWakeLock.release()
+            }
         }
     }
 
@@ -309,10 +348,16 @@ class RainMonitorService : Service() {
         private const val BACKUP_SLACK_MS = 60 * 1000L
         // Upper bound in case a cycle hangs; normal cycles take a few seconds.
         private const val WAKE_LOCK_TIMEOUT_MS = 2 * 60 * 1000L
+        const val ACTION_DAILY_BRIEF = "com.goju.ribs.myrainassist.action.DAILY_BRIEF"
         private const val ACTION_CHECK_NOW = "com.goju.ribs.myrainassist.action.CHECK_NOW"
         private const val ACTION_ALARM = "com.goju.ribs.myrainassist.action.ALARM"
 
         /** Requests an out-of-cadence forecast cycle right away, e.g. when the app comes to the foreground. */
+        /** Sends the daily brief right away (설정 → 지금 받아 보기, debug hook). */
+        fun requestDailyBriefNow(context: Context) {
+            ContextCompat.startForegroundService(context, Intent(context, RainMonitorService::class.java).setAction(ACTION_DAILY_BRIEF))
+        }
+
         fun requestImmediateCheck(context: Context) {
             val intent = Intent(context, RainMonitorService::class.java).setAction(ACTION_CHECK_NOW)
             ContextCompat.startForegroundService(context, intent)

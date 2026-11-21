@@ -12,6 +12,7 @@ import android.webkit.JavascriptInterface
 class NativeUiBridge(
     private val onOpenEventLog: () -> Unit,
     private val onWebOwnsEventLogButton: (Boolean) -> Unit,
+    private val onOpenSettings: () -> Unit,
 ) {
     private val main = Handler(Looper.getMainLooper())
 
@@ -19,6 +20,12 @@ class NativeUiBridge(
     @JavascriptInterface
     fun openEventLog() {
         main.post(onOpenEventLog)
+    }
+
+    /** The page's 톱니 (settings) button was tapped. Pages check `typeof openSettings === 'function'` first. */
+    @JavascriptInterface
+    fun openSettings() {
+        main.post(onOpenSettings)
     }
 
     /** true: the page draws its own 기록 button, so the app hides its overlay button (which would sit on top of the page's sheet). */
