@@ -50,4 +50,32 @@ class DailyBriefTest {
         assertEquals("오후 12:05", koreanClock(12, 5))
         assertEquals("오전 12:00", koreanClock(0, 0))
     }
+
+    @Test fun timesStaySortedUniqueAndCapped() {
+        var s = DailyBriefSettings(true, listOf(LocalTime.of(18, 0)))
+        s = s.withTime(LocalTime.of(7, 30)).withTime(LocalTime.of(12, 0)).withTime(LocalTime.of(7, 30))
+        assertEquals(listOf(LocalTime.of(7, 30), LocalTime.of(12, 0), LocalTime.of(18, 0)), s.times)
+        s = s.withTime(LocalTime.of(9, 0)).withTime(LocalTime.of(21, 0)).withTime(LocalTime.of(22, 0))
+        assertEquals(DailyBriefSettings.MAX_TIMES, s.times.size)
+        s = s.withoutTime(LocalTime.of(12, 0))
+        assertEquals(listOf(LocalTime.of(7, 30), LocalTime.of(9, 0), LocalTime.of(18, 0), LocalTime.of(21, 0)), s.times)
+        s = s.replaceTime(LocalTime.of(21, 0), LocalTime.of(6, 0))
+        assertEquals(LocalTime.of(6, 0), s.times.first())
+    }
+
+    @Test fun encodeDecode() {
+        val times = listOf(LocalTime.of(7, 30), LocalTime.of(18, 5))
+        assertEquals("07:30,18:05", DailyBriefSettings.encode(times))
+        assertEquals(times, DailyBriefSettings.decode("18:05, 07:30,bad"))
+    }
+
+    @Test fun nextOfSeveral() {
+        val zone = ZoneId.of("Asia/Seoul")
+        val noon = ZonedDateTime.of(2026, 11, 21, 12, 0, 0, 0, zone)
+        val times = listOf(LocalTime.of(7, 30), LocalTime.of(18, 0))
+        assertEquals(ZonedDateTime.of(2026, 11, 21, 18, 0, 0, 0, zone), DailyBriefScheduler.nextTrigger(noon, times))
+        val night = ZonedDateTime.of(2026, 11, 21, 19, 0, 0, 0, zone)
+        assertEquals(ZonedDateTime.of(2026, 11, 22, 7, 30, 0, 0, zone), DailyBriefScheduler.nextTrigger(night, times))
+        assertEquals(null, DailyBriefScheduler.nextTrigger(night, emptyList()))
+    }
 }

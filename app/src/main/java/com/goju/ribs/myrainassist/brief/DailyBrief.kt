@@ -15,28 +15,50 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import kotlin.math.roundToInt
 
-/** The user's "매일 날씨 알림" choice: on/off and the time of day (device time zone). */
-data class DailyBriefSettings(val enabled: Boolean, val hour: Int, val minute: Int) {
-    val time: LocalTime get() = LocalTime.of(hour, minute)
+/**
+ * The user's "매일 날씨 알림" choice: on/off and up to [MAX_TIMES] times of day (device time zone),
+ * kept sorted earliest first without duplicates.
+ */
+data class DailyBriefSettings(val enabled: Boolean, val times: List<LocalTime>) {
+
+    fun withTime(time: LocalTime): DailyBriefSettings =
+        if (times.size >= MAX_TIMES || time in times) this else copy(times = (times + time).sorted())
+
+    fun withoutTime(time: LocalTime): DailyBriefSettings = copy(times = times - time)
+
+    fun replaceTime(old: LocalTime, new: LocalTime): DailyBriefSettings =
+        if (new != old && new in times) withoutTime(old) else copy(times = (times - old + new).sorted())
 
     companion object {
+        const val MAX_TIMES = 5
         private const val PREFS = "daily_brief"
-        val DEFAULT = DailyBriefSettings(enabled = false, hour = 7, minute = 30)
+        val DEFAULT_TIME: LocalTime = LocalTime.of(7, 30)
+
+        /** "07:30,18:00" */
+        fun encode(times: List<LocalTime>): String = times.joinToString(",") { "%02d:%02d".format(it.hour, it.minute) }
+
+        fun decode(text: String?): List<LocalTime> = text.orEmpty().split(",").mapNotNull { part ->
+            val (h, m) = part.split(":").takeIf { it.size == 2 } ?: return@mapNotNull null
+            runCatching { LocalTime.of(h.trim().toInt(), m.trim().toInt()) }.getOrNull()
+        }.distinct().sorted().take(MAX_TIMES)
 
         fun read(context: Context): DailyBriefSettings {
             val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            return DailyBriefSettings(
-                p.getBoolean("enabled", DEFAULT.enabled),
-                p.getInt("hour", DEFAULT.hour),
-                p.getInt("minute", DEFAULT.minute),
-            )
+            val times = when {
+                p.contains("times") -> decode(p.getString("times", null))
+                // Before multiple times: a single hour/minute.
+                p.contains("hour") -> listOf(LocalTime.of(p.getInt("hour", 7), p.getInt("minute", 30)))
+                else -> listOf(DEFAULT_TIME)
+            }
+            return DailyBriefSettings(p.getBoolean("enabled", false), times)
         }
 
         fun save(context: Context, settings: DailyBriefSettings) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putBoolean("enabled", settings.enabled)
-                .putInt("hour", settings.hour)
-                .putInt("minute", settings.minute)
+                .putString("times", encode(settings.times))
+                .remove("hour")
+                .remove("minute")
                 .apply()
             DailyBriefScheduler.schedule(context)
         }
@@ -57,6 +79,10 @@ object DailyBriefScheduler {
         return if (today.isAfter(now)) today else today.plusDays(1)
     }
 
+    /** The soonest of [times] after [now]; only that one is booked, the brief books the next. */
+    fun nextTrigger(now: ZonedDateTime, times: List<LocalTime>): ZonedDateTime? =
+        times.map { nextTrigger(now, it) }.minOrNull()
+
     fun schedule(context: Context) {
         val alarmManager = context.getSystemService(AlarmManager::class.java)
         val pendingIntent = PendingIntent.getForegroundService(
@@ -66,11 +92,12 @@ object DailyBriefScheduler {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val settings = DailyBriefSettings.read(context)
-        if (!settings.enabled) {
+        val next = if (settings.enabled) nextTrigger(ZonedDateTime.now(ZoneId.systemDefault()), settings.times) else null
+        if (next == null) {
             alarmManager.cancel(pendingIntent)
             return
         }
-        val at = nextTrigger(ZonedDateTime.now(ZoneId.systemDefault()), settings.time).toInstant().toEpochMilli()
+        val at = next.toInstant().toEpochMilli()
         if (alarmManager.canScheduleExactAlarms()) {
             alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pendingIntent)
         } else {

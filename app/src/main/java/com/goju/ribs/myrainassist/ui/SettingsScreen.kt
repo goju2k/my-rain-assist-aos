@@ -42,9 +42,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.goju.ribs.myrainassist.brief.DailyBriefSettings
 import com.goju.ribs.myrainassist.service.RainMonitorService
+import java.time.LocalTime
 
 private val PageBg = Color(0xFFF3F6FA)
 private val Divider = Color(0xFFEDF1F6)
+
+// Marker for "the picker is adding a new time" (a time no one can pick: seconds set).
+private val ADD: LocalTime = LocalTime.of(0, 0, 1)
 
 /** "오전 7:30" */
 fun koreanClock(hour: Int, minute: Int): String {
@@ -59,7 +63,8 @@ fun koreanClock(hour: Int, minute: Int): String {
 fun SettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var settings by remember { mutableStateOf(DailyBriefSettings.read(context)) }
-    var picking by remember { mutableStateOf(false) }
+    // Time picker target: null = closed, ADD = new time, otherwise the time being changed.
+    var picking by remember { mutableStateOf<LocalTime?>(null) }
     val exactAllowed = remember { context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms() }
 
     fun update(next: DailyBriefSettings) {
@@ -100,20 +105,45 @@ fun SettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                         Switch(checked = settings.enabled, onCheckedChange = { update(settings.copy(enabled = it)) })
                     }
                     if (settings.enabled) {
+                        settings.times.forEach { time ->
+                            HorizontalDivider(color = Divider)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { picking = time }
+                                    .padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    koreanClock(time.hour, time.minute),
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(onClick = { update(settings.withoutTime(time)) }) {
+                                    Text("삭제", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
                         HorizontalDivider(color = Divider)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { picking = true }
-                                .padding(horizontal = 18.dp, vertical = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("알림 시각", fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        if (settings.times.size < DailyBriefSettings.MAX_TIMES) {
                             Text(
-                                koreanClock(settings.hour, settings.minute),
+                                "+ 시각 추가",
                                 fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { picking = ADD }
+                                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                            )
+                        } else {
+                            Text(
+                                "최대 ${DailyBriefSettings.MAX_TIMES}개까지 등록할 수 있어요",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
                             )
                         }
                     }
@@ -149,19 +179,21 @@ fun SettingsScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
         }
     }
 
-    if (picking) {
-        val state = rememberTimePickerState(initialHour = settings.hour, initialMinute = settings.minute, is24Hour = false)
+    picking?.let { target ->
+        val initial = if (target == ADD) DailyBriefSettings.DEFAULT_TIME else target
+        val state = rememberTimePickerState(initialHour = initial.hour, initialMinute = initial.minute, is24Hour = false)
         AlertDialog(
-            onDismissRequest = { picking = false },
-            title = { Text("알림 시각") },
+            onDismissRequest = { picking = null },
+            title = { Text(if (target == ADD) "시각 추가" else "시각 바꾸기") },
             text = { TimePicker(state = state) },
             confirmButton = {
                 TextButton(onClick = {
-                    update(settings.copy(hour = state.hour, minute = state.minute))
-                    picking = false
+                    val chosen = LocalTime.of(state.hour, state.minute)
+                    update(if (target == ADD) settings.withTime(chosen) else settings.replaceTime(target, chosen))
+                    picking = null
                 }) { Text("확인") }
             },
-            dismissButton = { TextButton(onClick = { picking = false }) { Text("취소") } },
+            dismissButton = { TextButton(onClick = { picking = null }) { Text("취소") } },
         )
     }
 }
