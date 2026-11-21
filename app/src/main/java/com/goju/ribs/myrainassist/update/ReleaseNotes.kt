@@ -11,13 +11,6 @@ object ReleaseNotes {
 
     val ENTRIES: List<Entry> = listOf(
         Entry(
-            versionCode = 11,
-            versionName = "0.11.0",
-            lines = listOf(
-                "영상 3도 이하면 '눈', 4도면 '눈/비'로 알려 드려요. 3~4도에서 눈이 오는데 '비'라고 하던 걸 고쳤어요.",
-            ),
-        ),
-        Entry(
             versionCode = 10,
             versionName = "0.10.0",
             lines = listOf(
