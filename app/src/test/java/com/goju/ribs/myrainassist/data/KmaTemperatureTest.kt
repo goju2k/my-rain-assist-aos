@@ -31,8 +31,9 @@ class KmaTemperatureTest {
     }
 
     @Test fun snowAtTwoDegreesOrBelow() {
-        assertEquals(PrecipKind.SNOW, PrecipKind.forCelsius(2.0))
-        assertEquals(PrecipKind.RAIN, PrecipKind.forCelsius(3.0))
+        assertEquals(PrecipKind.SNOW, PrecipKind.forCelsius(3.0))
+        assertEquals(PrecipKind.MIXED, PrecipKind.forCelsius(4.0))
+        assertEquals(PrecipKind.RAIN, PrecipKind.forCelsius(5.0))
         assertEquals(PrecipKind.RAIN, PrecipKind.forCelsius(null))
     }
 }

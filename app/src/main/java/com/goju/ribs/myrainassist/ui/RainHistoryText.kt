@@ -51,7 +51,7 @@ object RainHistoryText {
     }
 
     fun title(e: RainEpisode): String {
-        val word = if (e.snow) "눈" else "비"
+        val word = e.kind.noun
         if (e.missed) return "$word 소식 · ${clock(e.startMs)}"
         val end = e.endMs?.let { clock(it) } ?: "지금"
         return "$word ${clock(e.startMs)} ~ $end"

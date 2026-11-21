@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.goju.ribs.myrainassist.data.PrecipKind
 import com.goju.ribs.myrainassist.data.RainEpisode
 import com.goju.ribs.myrainassist.ui.theme.RainBlue
 import com.goju.ribs.myrainassist.ui.theme.RainSky
@@ -150,12 +151,13 @@ private fun WeekSummary(episodes: List<RainEpisode>, nowMs: Long) {
 private fun EpisodeCard(e: RainEpisode, nowMs: Long) {
     val tint = when {
         e.missed -> MissTint
-        e.snow -> SnowTint
+        e.kind != PrecipKind.RAIN -> SnowTint
         else -> RainTint
     }
     val icon = when {
         e.missed -> "☁️"
-        e.snow -> "❄️"
+        e.kind == PrecipKind.SNOW -> "❄️"
+        e.kind == PrecipKind.MIXED -> "🌨️"
         else -> "🌧️"
     }
     Surface(

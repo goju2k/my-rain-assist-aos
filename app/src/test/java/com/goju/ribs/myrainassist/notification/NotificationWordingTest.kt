@@ -17,4 +17,11 @@ class NotificationWordingTest {
         assertEquals("많은 눈이 오고 있어요", NotificationHelper.ongoingTextFor(ForecastState.ACTIVE, false, null, 20.0, kind = snow))
         assertEquals("눈이 그쳤어요", NotificationHelper.ongoingTextFor(ForecastState.NONE, true, null, kind = snow))
     }
+
+    @Test fun mixedWording() {
+        val mixed = PrecipKind.MIXED
+        assertEquals("20분 뒤 약한 눈/비가 옵니다", NotificationHelper.ongoingTextFor(ForecastState.INCOMING, false, 20, 1.0, kind = mixed))
+        assertEquals("눈/비가 오고 있어요", NotificationHelper.ongoingTextFor(ForecastState.ACTIVE, false, null, 5.0, kind = mixed))
+        assertEquals("눈/비가 그쳤어요", NotificationHelper.ongoingTextFor(ForecastState.NONE, true, null, kind = mixed))
+    }
 }

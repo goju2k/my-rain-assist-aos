@@ -278,7 +278,7 @@ class RainMonitorService : Service() {
             active = result.state == ForecastState.ACTIVE,
             stopped = action == NotificationDedup.Action.NotifyRainStopped,
             missed = action == NotificationDedup.Action.ResetToIdle,
-            snow = kind == PrecipKind.SNOW,
+            kind = kind,
         )
 
         // "비가 그쳤어요" is news for a while, then just stale: the ongoing notification already
