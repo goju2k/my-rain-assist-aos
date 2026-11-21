@@ -66,6 +66,9 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <!-- An app update kills the process; restart monitoring without waiting for the user to open the app. -->
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <!-- The daily brief is a wall-clock alarm: re-book it when the clock or time zone changes. -->
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
         </receiver>
     </application>

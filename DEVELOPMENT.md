@@ -547,6 +547,11 @@ adb shell cat /sdcard/Android/data/com.goju.ribs.myrainassist/files/debug/rain_e
   보여 준다. 서비스가 사이클마다 `RainHistoryStore.record`(ACTIVE면 열고/늘리고, 그쳤어요 알림에서 닫고, 예보가
   빗나가면 '오지 않음' 한 줄). 확인이 20분 끊긴 구간은 마지막 확인 시각에서 닫는다. 옛 알림 기록 화면은 없앴고
   알림·사이클 기록은 디버그용으로 저장만 한다(10장 adb 명령).
+- 매일 날씨 알림(`brief/DailyBrief.kt`, `ui/SettingsScreen`): 웹 톱니 → `RainAssistNative.openSettings()` → 설정에서 켜고
+  시각을 고르면(최대 5개, 빠른 순 정렬, 줄마다 삭제) `DailyBriefScheduler`가 가장 가까운 시각 하나만 정확 알람(RTC_WAKEUP)으로 서비스에 `ACTION_DAILY_BRIEF`를 보낸다. 서비스는
+  위치·레이더·기온을 한 번 보고 `daily_brief` 채널로 "기온 3℃ · 패딩 추천 / 지금은 눈 소식이 없어요"를 보낸 뒤 다음 시각을 예약.
+  재예약: 설정 저장, 서비스 시작, 부팅·앱 업데이트, 시각·시간대 변경. 옷차림 표(`data/Outfit.kt`)는 웹 칩과 같은 값.
+  디버그: `... -a com.goju.ribs.myrainassist.debug.BRIEF_NOW`.
 - 앱 색(0.9~, `ui/theme`): 배경화면을 따르는 dynamic color를 끄고 브랜드 파랑(#1f6feb, 웹 지도 강조색)으로
   고정한다. dynamic color에서는 폰에 따라 창이 흐린 회색으로 나왔다.
 - 배포 키는 저장소에 없다(`keystore.properties`, gitignore). 0.4부터 새 키 — 0.3 이하(옛 키)는 덮어 설치가

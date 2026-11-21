@@ -15,7 +15,7 @@ data class RainEpisode(
     val endMs: Long?,
     /** Last cycle that still saw it overhead — where an episode is closed if the stop was never seen. */
     val lastSeenMs: Long,
-    val snow: Boolean,
+    val kind: PrecipKind,
     val missed: Boolean = false,
 )
 
@@ -42,7 +42,7 @@ object RainHistoryRecorder {
         active: Boolean,
         stopped: Boolean,
         missed: Boolean,
-        snow: Boolean,
+        kind: PrecipKind,
     ): List<RainEpisode> {
         val out = episodes.filter { (it.endMs ?: it.lastSeenMs) >= nowMs - RETENTION_MS }.toMutableList()
         var openIndex = out.indexOfLast { it.endMs == null && !it.missed }
@@ -51,10 +51,10 @@ object RainHistoryRecorder {
             openIndex = -1
         }
         when {
-            active && openIndex < 0 -> out += RainEpisode(nowMs, null, nowMs, snow)
+            active && openIndex < 0 -> out += RainEpisode(nowMs, null, nowMs, kind)
             active -> out[openIndex] = out[openIndex].copy(lastSeenMs = nowMs)
             stopped && openIndex >= 0 -> out[openIndex] = out[openIndex].copy(endMs = nowMs)
-            missed && openIndex < 0 -> out += RainEpisode(nowMs, nowMs, nowMs, snow, missed = true)
+            missed && openIndex < 0 -> out += RainEpisode(nowMs, nowMs, nowMs, kind, missed = true)
         }
         return out
     }
@@ -77,7 +77,8 @@ object RainHistoryStore {
                     startMs = o.getLong("startMs"),
                     endMs = if (o.isNull("endMs")) null else o.getLong("endMs"),
                     lastSeenMs = o.getLong("lastSeenMs"),
-                    snow = o.optBoolean("snow"),
+                    // 0.10.0 stored a "snow" flag; later builds store the kind name.
+                    kind = if (o.has("kind")) PrecipKind.fromName(o.optString("kind")) else if (o.optBoolean("snow")) PrecipKind.SNOW else PrecipKind.RAIN,
                     missed = o.optBoolean("missed"),
                 )
             }
@@ -85,9 +86,9 @@ object RainHistoryStore {
     }
 
     @Synchronized
-    fun record(context: Context, nowMs: Long, active: Boolean, stopped: Boolean, missed: Boolean, snow: Boolean) {
+    fun record(context: Context, nowMs: Long, active: Boolean, stopped: Boolean, missed: Boolean, kind: PrecipKind) {
         val before = read(context)
-        val after = RainHistoryRecorder.update(before, nowMs, active, stopped, missed, snow)
+        val after = RainHistoryRecorder.update(before, nowMs, active, stopped, missed, kind)
         if (after == before) return
         val array = JSONArray()
         after.forEach { e ->
@@ -96,7 +97,7 @@ object RainHistoryStore {
                     .put("startMs", e.startMs)
                     .put("endMs", e.endMs ?: JSONObject.NULL)
                     .put("lastSeenMs", e.lastSeenMs)
-                    .put("snow", e.snow)
+                    .put("kind", e.kind.name)
                     .put("missed", e.missed),
             )
         }

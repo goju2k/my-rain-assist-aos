@@ -27,6 +27,8 @@ object NotificationHelper {
     const val ONGOING_CHANNEL_ID = "rain_monitor_ongoing_v3"
     private val LEGACY_ONGOING_CHANNEL_IDS = listOf("rain_monitor_ongoing", "rain_monitor_ongoing_v2")
     const val ALERT_CHANNEL_ID = "rain_monitor_alert"
+    const val BRIEF_CHANNEL_ID = "daily_brief"
+    private const val BRIEF_NOTIFICATION_ID = 200
     const val ONGOING_NOTIFICATION_ID = 1
     private const val ALERT_NOTIFICATION_ID = 100
     // Long enough for the user to notice the screen light up and glance at the lock screen
@@ -48,6 +50,32 @@ object NotificationHelper {
                 description = "비가 다가오거나 시작될 때 알려줍니다."
             },
         )
+        // Separate from rain alerts so the user can give it its own sound in system settings.
+        manager.createNotificationChannel(
+            NotificationChannel(BRIEF_CHANNEL_ID, "매일 날씨 알림", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "정한 시각에 내 위치의 기온·옷차림·비 소식을 알려줍니다."
+            },
+        )
+    }
+
+    /** The daily brief (설정 → 매일 날씨 알림). Doesn't light the screen like a rain alert does. */
+    fun showDailyBrief(context: Context, title: String, text: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        createChannels(context)
+        val notification = NotificationCompat.Builder(context, BRIEF_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(contentIntent(context))
+            .build()
+        context.getSystemService(NotificationManager::class.java).notify(BRIEF_NOTIFICATION_ID, notification)
     }
 
     const val DEFAULT_ONGOING_TEXT = "주변 구름을 감지하고 있어요"

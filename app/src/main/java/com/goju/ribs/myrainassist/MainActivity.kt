@@ -42,6 +42,7 @@ import com.goju.ribs.myrainassist.ui.OnboardingStepInfo
 import com.goju.ribs.myrainassist.ui.PermissionOnboardingScreen
 import com.goju.ribs.myrainassist.data.RainHistoryStore
 import com.goju.ribs.myrainassist.ui.RainHistoryScreen
+import com.goju.ribs.myrainassist.ui.SettingsScreen
 import com.goju.ribs.myrainassist.ui.RainWebViewScreen
 import com.goju.ribs.myrainassist.ui.theme.MyRainAssistTheme
 import com.goju.ribs.myrainassist.update.AppUpdater
@@ -88,6 +89,7 @@ class MainActivity : ComponentActivity() {
     // Release notes to show once after an update (empty = nothing to show).
     private var whatsNew by mutableStateOf<List<ReleaseNotes.Entry>>(emptyList())
     private var showEventLog by mutableStateOf(false)
+    private var showSettings by mutableStateOf(false)
     // The page draws its own 기록 button when it says so (NativeUiBridge); until then, the app's overlay one.
     private var webOwnsEventLogButton by mutableStateOf(false)
     // The page has something to go back to (an open sheet/viewer pushed a history entry) — back closes that first.
@@ -95,6 +97,7 @@ class MainActivity : ComponentActivity() {
     private val nativeUiBridge = NativeUiBridge(
         onOpenEventLog = { showEventLog = true },
         onWebOwnsEventLogButton = { webOwnsEventLogButton = it },
+        onOpenSettings = { showSettings = true },
     )
     private var lastUpdateCheckAt = 0L
     // Downloaded APK waiting on the "install unknown apps" switch the user is sent to flip.
@@ -145,7 +148,8 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     if (index >= ONBOARDING_STEPS.size) {
                         BackHandler(enabled = showEventLog) { showEventLog = false }
-                        BackHandler(enabled = !showEventLog && webCanGoBack) { webView?.goBack() }
+                        BackHandler(enabled = showSettings) { showSettings = false }
+                        BackHandler(enabled = !showEventLog && !showSettings && webCanGoBack) { webView?.goBack() }
                         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                             RainWebViewScreen(
                                 onWebViewCreated = { webView = it },
@@ -153,7 +157,11 @@ class MainActivity : ComponentActivity() {
                                 onCanGoBackChanged = { webCanGoBack = it },
                                 modifier = Modifier.fillMaxSize(),
                             )
-                            if (showEventLog) {
+                            if (showSettings) {
+                                Surface(modifier = Modifier.fillMaxSize()) {
+                                    SettingsScreen(onBack = { showSettings = false }, modifier = Modifier.fillMaxSize())
+                                }
+                            } else if (showEventLog) {
                                 Surface(modifier = Modifier.fillMaxSize()) {
                                     RainHistoryScreen(
                                         episodes = remember(showEventLog) { RainHistoryStore.read(this@MainActivity) },

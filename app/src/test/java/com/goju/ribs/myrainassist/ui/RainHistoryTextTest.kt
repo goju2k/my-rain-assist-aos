@@ -1,5 +1,6 @@
 package com.goju.ribs.myrainassist.ui
 
+import com.goju.ribs.myrainassist.data.PrecipKind
 import com.goju.ribs.myrainassist.data.RainEpisode
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -12,15 +13,17 @@ class RainHistoryTextTest {
     private val now = kst(2026, 11, 21, 9, 0)
 
     @Test fun titlesAndDetails() {
-        val snow = RainEpisode(kst(2026, 11, 21, 0, 10), kst(2026, 11, 21, 1, 40), 0, snow = true)
+        val snow = RainEpisode(kst(2026, 11, 21, 0, 10), kst(2026, 11, 21, 1, 40), 0, kind = PrecipKind.SNOW)
         assertEquals("눈 00:10 ~ 01:40", RainHistoryText.title(snow))
         assertEquals("1시간 30분", RainHistoryText.detail(snow, now))
-        val ongoing = RainEpisode(kst(2026, 11, 21, 8, 20), null, 0, snow = false)
+        val ongoing = RainEpisode(kst(2026, 11, 21, 8, 20), null, 0, kind = PrecipKind.RAIN)
         assertEquals("비 08:20 ~ 지금", RainHistoryText.title(ongoing))
         assertEquals("40분째 오는 중", RainHistoryText.detail(ongoing, now))
-        val missed = RainEpisode(kst(2026, 11, 16, 9, 30), kst(2026, 11, 16, 9, 30), 0, snow = false, missed = true)
+        val missed = RainEpisode(kst(2026, 11, 16, 9, 30), kst(2026, 11, 16, 9, 30), 0, kind = PrecipKind.RAIN, missed = true)
         assertEquals("비 소식 · 09:30", RainHistoryText.title(missed))
         assertEquals("예보했지만 비켜 갔어요", RainHistoryText.detail(missed, now))
+        val mixed = RainEpisode(kst(2026, 11, 21, 3, 0), kst(2026, 11, 21, 3, 30), 0, kind = PrecipKind.MIXED)
+        assertEquals("눈/비 03:00 ~ 03:30", RainHistoryText.title(mixed))
     }
 
     @Test fun durations() {
@@ -31,11 +34,11 @@ class RainHistoryTextTest {
 
     @Test fun headlineCountsRealSpellsInLastSevenDays() {
         val list = listOf(
-            RainEpisode(kst(2026, 11, 21, 0, 10), kst(2026, 11, 21, 1, 40), 0, snow = true),
-            RainEpisode(kst(2026, 11, 18, 14, 20), kst(2026, 11, 18, 16, 5), 0, snow = false),
-            RainEpisode(kst(2026, 11, 18, 19, 40), kst(2026, 11, 18, 19, 55), 0, snow = false),
-            RainEpisode(kst(2026, 11, 16, 9, 30), kst(2026, 11, 16, 9, 30), 0, snow = false, missed = true),
-            RainEpisode(kst(2026, 11, 10, 9, 0), kst(2026, 11, 10, 10, 0), 0, snow = false),
+            RainEpisode(kst(2026, 11, 21, 0, 10), kst(2026, 11, 21, 1, 40), 0, kind = PrecipKind.SNOW),
+            RainEpisode(kst(2026, 11, 18, 14, 20), kst(2026, 11, 18, 16, 5), 0, kind = PrecipKind.RAIN),
+            RainEpisode(kst(2026, 11, 18, 19, 40), kst(2026, 11, 18, 19, 55), 0, kind = PrecipKind.RAIN),
+            RainEpisode(kst(2026, 11, 16, 9, 30), kst(2026, 11, 16, 9, 30), 0, kind = PrecipKind.RAIN, missed = true),
+            RainEpisode(kst(2026, 11, 10, 9, 0), kst(2026, 11, 10, 10, 0), 0, kind = PrecipKind.RAIN),
         )
         assertEquals("2일 동안 3번 왔어요", RainHistoryText.headline(list, now))
         assertEquals("비·눈이 오지 않았어요", RainHistoryText.headline(emptyList(), now))

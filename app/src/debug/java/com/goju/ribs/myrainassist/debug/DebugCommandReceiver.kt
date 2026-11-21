@@ -14,6 +14,7 @@ import com.goju.ribs.myrainassist.service.RainMonitorService
  *       -a com.goju.ribs.myrainassist.debug.SET_LOCATION --es lat 35.18 --es lon 129.07
  *   ... -a com.goju.ribs.myrainassist.debug.CLEAR_LOCATION
  *   ... -a com.goju.ribs.myrainassist.debug.CHECK_NOW
+ *   ... -a com.goju.ribs.myrainassist.debug.BRIEF_NOW   (send the daily brief now)
  *
  * Location changes also trigger an immediate forecast cycle.
  */
@@ -36,6 +37,10 @@ class DebugCommandReceiver : BroadcastReceiver() {
                 Log.i(TAG, "location override cleared")
             }
             ACTION_CHECK_NOW -> Log.i(TAG, "check now")
+            ACTION_BRIEF_NOW -> {
+                RainMonitorService.requestDailyBriefNow(context)
+                return
+            }
             else -> return
         }
         RainMonitorService.requestImmediateCheck(context)
@@ -46,5 +51,6 @@ class DebugCommandReceiver : BroadcastReceiver() {
         const val ACTION_SET_LOCATION = "com.goju.ribs.myrainassist.debug.SET_LOCATION"
         const val ACTION_CLEAR_LOCATION = "com.goju.ribs.myrainassist.debug.CLEAR_LOCATION"
         const val ACTION_CHECK_NOW = "com.goju.ribs.myrainassist.debug.CHECK_NOW"
+        const val ACTION_BRIEF_NOW = "com.goju.ribs.myrainassist.debug.BRIEF_NOW"
     }
 }
