@@ -11,6 +11,14 @@ object ReleaseNotes {
 
     val ENTRIES: List<Entry> = listOf(
         Entry(
+            versionCode = 11,
+            versionName = "0.11.0",
+            lines = listOf(
+                "매일 날씨 알림: 화면 아래 톱니에서 시각을 정하면(최대 5개) 그때 기온·옷차림·비 소식을 알려 드려요.",
+                "영상 3도 이하면 '눈', 4도면 '눈/비'로 알려 드려요.",
+            ),
+        ),
+        Entry(
             versionCode = 10,
             versionName = "0.10.0",
             lines = listOf(
